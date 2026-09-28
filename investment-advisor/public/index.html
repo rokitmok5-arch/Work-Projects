@@ -29,7 +29,7 @@
     th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
     th { color: var(--muted); font-weight: 500; }
     td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
-    .up { color: var(--up); } .down { color: var(--down); }
+    .up { color: var(--up); } .down { color: var(--down); } .warn { color: var(--warn); }
     .pill { display: inline-block; padding: 1px 8px; border-radius: 99px; font-size: 12px; border: 1px solid var(--line); }
     details { border-bottom: 1px solid var(--line); padding: 10px 0; }
     summary { cursor: pointer; font-weight: 600; }
@@ -55,12 +55,34 @@
 <script>
 const $ = (s) => document.querySelector(s);
 const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const pct = (v) => v == null ? 'n/a' : `<span class="${v >= 0 ? 'up' : 'down'}">${v > 0 ? '+' : ''}${v.toFixed(1)}%</span>`;
+const pct = (v) => v == null ? 'n/a' : `<span class="${v > 0 ? 'up' : v < 0 ? 'down' : 'muted'}">${v > 0 ? '+' : ''}${v.toFixed(1)}%</span>`;
 const ACTION = { strong_buy: 'Strong buy', buy: 'Buy', accumulate: 'Accumulate', watch: 'Watch' };
+
+const REACTION = { reacting: ['reacting', 'up'], 'not yet reflected': ['not yet reflected', 'warn'], diverging: ['moving the other way', 'down'] };
+const reaction = (v) => { const [label, cls] = REACTION[v] ?? [v, 'muted']; return `<span class="${cls}">${esc(label)}</span>`; };
+
+function flux(map) {
+  if (!map?.anomalies?.length) return '';
+  const rows = map.anomalies.map((r) => {
+    const z = Math.abs(r.move1dZ ?? 0) >= Math.abs(r.move5dZ ?? 0) ? `${r.move1dZ}σ 1d` : `${r.move5dZ}σ 5d`;
+    return `<tr><td>${esc(r.label)} <span class="muted">${esc(r.symbol)}</span></td><td>${esc(r.group)}</td><td class="num">${pct(r.change1dPct)}</td><td class="num">${pct(r.change5dPct)}</td><td class="num">${esc(z)}</td></tr>`;
+  }).join('');
+  return `<h2>Market flux: unusual moves</h2><div class="panel table-wrap"><table>
+    <thead><tr><th>Instrument</th><th>Group</th><th class="num">1d</th><th class="num">5d</th><th class="num">Size</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
+function events(list) {
+  if (!list.length) return '';
+  return `<h2>Global events → market transmission</h2><div class="panel">${list.map((e) => `<details><summary>${esc(e.name)} <span class="pill">severity ${e.severity}/5</span> <span class="muted">${e.outlets.length} outlets</span></summary>
+    <p>${esc(e.summary)}</p><p class="muted">${esc(e.outlets.join(', '))} · ${esc(e.regions.join(', ') || 'global')}</p>
+    <div class="table-wrap"><table><thead><tr><th>Asset</th><th>Expected</th><th>Order</th><th>Mechanism</th><th class="num">Since</th><th>Market</th></tr></thead><tbody>
+    ${e.channels.map((c) => `<tr><td><strong>${esc(c.symbol)}</strong></td><td>${c.direction === 'up' ? '▲' : '▼'}</td><td>${esc(c.order)}</td><td style="white-space:normal">${esc(c.mechanism)}</td><td class="num">${pct(c.moveSincePct)}</td><td>${reaction(c.reaction)}</td></tr>`).join('')}
+    </tbody></table></div><p><em>Outlook:</em> ${esc(e.outlook)}</p></details>`).join('')}</div>`;
+}
 
 function render(r) {
   const a = r.advice;
-  $('#meta').textContent = `Generated ${new Date(r.meta.generatedAt).toLocaleString()} · ${r.meta.articleCount} articles from ${r.meta.sourcesWithArticles} outlets · ${r.meta.pricedCount} assets priced`;
+  $('#meta').textContent = `Generated ${new Date(r.meta.generatedAt).toLocaleString()} · ${r.meta.articleCount} articles from ${r.meta.sourcesWithArticles} outlets · ${r.meta.eventCount ?? 0} global events · ${r.meta.pricedCount} assets priced`;
   const rows = a.recommendations.map((x) => `<tr>
       <td class="num">${x.rank}</td><td><strong>${esc(x.symbol)}</strong> <span class="muted">${esc(x.name)}</span></td>
       <td>${esc(x.asset_class)}</td><td><span class="pill">${ACTION[x.action]}</span></td><td>${esc(x.conviction)}</td>
@@ -68,6 +90,8 @@ function render(r) {
       <td class="num">${pct(x.market?.change1moPct)}</td><td class="num">${x.sources.length}</td><td>${esc(x.market?.trend ?? 'n/a')}</td></tr>`).join('');
   const details = a.recommendations.map((x) => `<details><summary>${x.rank}. ${esc(x.symbol)} — ${esc(x.name)}</summary>
       <p>${esc(x.thesis)}</p><ul>
+      ${x.causal_chain && x.causal_chain !== 'company-specific' ? `<li><strong>Causal chain:</strong> ${esc(x.causal_chain)}</li>` : ''}
+      ${(x.events ?? []).map((e) => `<li><strong>Event:</strong> ${esc(e.event)} — expected ${esc(e.direction)}, ${reaction(e.reaction)}${e.moveSincePct != null ? ` (${pct(e.moveSincePct)} since)` : ''}</li>`).join('')}
       <li><strong>News consensus:</strong> ${esc(x.news_consensus)}</li>
       <li><strong>Market:</strong> ${esc(x.market_confirmation)}</li>
       <li><strong>Catalysts:</strong> ${esc(x.catalysts.join('; '))}</li>
@@ -77,7 +101,8 @@ function render(r) {
       </ul></details>`).join('');
   $('#content').innerHTML = `
     <section class="panel"><h2 style="margin-top:0">Market overview</h2><p>${esc(a.market_overview)}</p>
-      <ul>${a.key_themes.map((t) => `<li><strong>${esc(t.theme)}</strong> — ${esc(t.implication)}</li>`).join('')}</ul></section>
+      <ul>${a.event_analysis.map((t) => `<li><strong>${esc(t.event)}</strong> — ${esc(t.implication)}<br><span class="muted">Market read: ${esc(t.market_read)}</span></li>`).join('')}</ul></section>
+    ${flux(r.marketMap)}
     <h2>Top ${a.recommendations.length} picks</h2>
     <div class="panel table-wrap"><table>
       <thead><tr><th class="num">#</th><th>Asset</th><th>Class</th><th>Action</th><th>Conviction</th><th class="num">Alloc.</th><th class="num">Price</th><th class="num">1mo</th><th class="num">Outlets</th><th>Trend</th></tr></thead>
@@ -85,6 +110,7 @@ function render(r) {
     <h2>Details</h2><div class="panel">${details}</div>
     ${a.avoid.length ? `<h2>Avoid / reduce</h2><div class="panel"><ul>${a.avoid.map((x) => `<li><strong>${esc(x.symbol)}</strong> ${esc(x.name)} — ${esc(x.reason)}</li>`).join('')}</ul></div>` : ''}
     <h2>Portfolio notes</h2><div class="panel"><p>${esc(a.portfolio_notes)}</p></div>
+    ${events(r.events ?? [])}
     ${a.warnings.length ? `<h2>Pipeline warnings</h2><div class="panel"><ul>${a.warnings.map((w) => `<li>${esc(w)}</li>`).join('')}</ul></div>` : ''}`;
 }
 

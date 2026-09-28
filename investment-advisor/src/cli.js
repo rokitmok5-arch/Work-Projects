@@ -8,7 +8,7 @@ const { values } = parseArgs({
   options: {
     profile: { type: 'string', short: 'p' },
     hours: { type: 'string', default: '72' },
-    'per-source': { type: 'string', default: '40' },
+    'per-source': { type: 'string', default: '60' },
     'min-sources': { type: 'string', default: '2' },
     picks: { type: 'string', default: '10-20' },
     quiet: { type: 'boolean', short: 'q', default: false },
@@ -21,7 +21,7 @@ if (values.help) {
 
   -p, --profile <file>     Investor profile JSON (default: profile.json, then profile.example.json)
       --hours <n>          Only use articles from the last n hours (default 72)
-      --per-source <n>     Max articles per outlet (default 40)
+      --per-source <n>     Max articles per outlet, balanced across its feeds (default 60)
       --min-sources <n>    Outlets that must agree before an asset is a candidate (default 2)
       --picks <min-max>    Number of recommendations (default 10-20)
   -q, --quiet              Only print the final report`);

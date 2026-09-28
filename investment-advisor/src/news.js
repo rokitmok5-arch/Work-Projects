@@ -61,36 +61,57 @@ async function fetchFullText(article, fetchImpl) {
   }
 }
 
-async function fetchSource(source, { fetchImpl, lookbackHours, maxPerSource }) {
-  const feeds = [...source.feeds];
-  let items = [];
-  const errors = [];
+async function fetchList(url, source, fetchImpl, errors, label = url) {
+  try {
+    return await parseFeed(await fetchText(url, { fetchImpl }), source);
+  } catch (err) {
+    errors.push(`${label}: ${err.message}`);
+    return [];
+  }
+}
 
-  for (const url of feeds) {
-    try {
-      items.push(...(await parseFeed(await fetchText(url, { fetchImpl }), source)));
-    } catch (err) {
-      errors.push(`${url}: ${err.message}`);
+/**
+ * Take articles round-robin across feeds (newest first within each) so an
+ * outlet's world and politics coverage is not crowded out by its business feed.
+ */
+export function balanceFeeds(lists, max) {
+  const queues = lists.map((l) => [...l]);
+  const seen = new Set();
+  const out = [];
+  while (out.length < max && queues.some((q) => q.length)) {
+    for (const q of queues) {
+      while (q.length) {
+        const a = q.shift();
+        if (seen.has(a.id)) continue;
+        seen.add(a.id);
+        out.push(a);
+        break;
+      }
+      if (out.length >= max) break;
     }
   }
+  return out;
+}
+
+async function fetchSource(source, { fetchImpl, lookbackHours, maxPerSource }) {
+  const errors = [];
+  let lists = await Promise.all(source.feeds.map((url) => fetchList(url, source, fetchImpl, errors)));
 
   let usedFallback = false;
-  if (items.length === 0 && source.googleNewsQuery) {
+  const queries = source.googleNewsQueries ?? [];
+  if (lists.every((l) => l.length === 0) && queries.length) {
     usedFallback = true;
-    try {
-      items = await parseFeed(await fetchText(googleNewsUrl(source.googleNewsQuery), { fetchImpl }), source);
-    } catch (err) {
-      errors.push(`google-news fallback: ${err.message}`);
-    }
+    lists = await Promise.all(
+      queries.map((q) => fetchList(googleNewsUrl(q), source, fetchImpl, errors, `google-news "${q}"`)),
+    );
   }
 
   const cutoff = Date.now() - lookbackHours * 3600 * 1000;
-  const seen = new Set();
-  const fresh = items
-    .filter((a) => !a.publishedAt || Date.parse(a.publishedAt) >= cutoff)
-    .filter((a) => (seen.has(a.id) ? false : seen.add(a.id)))
-    .sort((a, b) => (Date.parse(b.publishedAt ?? 0) || 0) - (Date.parse(a.publishedAt ?? 0) || 0))
-    .slice(0, maxPerSource);
+  const newest = (a, b) => (Date.parse(b.publishedAt) || 0) - (Date.parse(a.publishedAt) || 0);
+  const fresh = balanceFeeds(
+    lists.map((l) => l.filter((a) => !a.publishedAt || Date.parse(a.publishedAt) >= cutoff).sort(newest)),
+    maxPerSource,
+  );
 
   if (source.fullText) {
     await mapLimit(fresh.filter((a) => a.link), 4, async (a) => {
@@ -110,7 +131,7 @@ async function fetchSource(source, { fetchImpl, lookbackHours, maxPerSource }) {
  * Collect recent articles from every configured source.
  * Returns { articles, coverage } where coverage records per-source counts and errors.
  */
-export async function collectNews(sources, { fetchImpl = fetch, lookbackHours = 72, maxPerSource = 40 } = {}) {
+export async function collectNews(sources, { fetchImpl = fetch, lookbackHours = 72, maxPerSource = 60 } = {}) {
   const results = await mapLimit(sources, 4, (s) => fetchSource(s, { fetchImpl, lookbackHours, maxPerSource }));
   const coverage = results.map((r) => ({
     source: r.source.name,

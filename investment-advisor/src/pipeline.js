@@ -3,8 +3,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { collectNews } from './news.js';
 import { extractSignals } from './extract.js';
-import { buildConsensus, selectCandidates, scoreCandidates, topThemes } from './aggregate.js';
-import { fetchQuotes } from './market.js';
+import { buildConsensus, selectCandidates, scoreCandidates, topThemes, linkEvents } from './aggregate.js';
+import { analyzeEvents, eventSignals, measureReactions } from './events.js';
+import { fetchQuotes, buildMarketMap } from './market.js';
 import { generateAdvice } from './advise.js';
 import { renderMarkdown } from './report.js';
 import { log } from './util.js';
@@ -33,77 +34,102 @@ export async function loadProfile(file) {
 }
 
 /**
- * Full pipeline: news -> Claude signal extraction -> cross-source consensus ->
- * live market data -> Claude advisory synthesis -> report.
+ * Full pipeline:
+ *   news (markets + world affairs)
+ *     -> Claude: per-article signals  +  Claude: global events and their transmission channels
+ *     -> cross-outlet consensus
+ *     -> live market data for candidates, event channels and the cross-asset market map
+ *     -> how the market has reacted to each event so far
+ *     -> Claude advisory synthesis -> report
  */
 export async function runPipeline({
   profile,
   config,
   lookbackHours = 72,
-  maxPerSource = 40,
+  maxPerSource = 60,
   minSources = 2,
   minPicks = 10,
   maxPicks = 20,
+  maxEvents = 15,
   fetchImpl = fetch,
   client,
   onStage = () => {},
 } = {}) {
   config ??= await loadConfig();
   profile ??= await loadProfile();
+  const warnings = [];
 
   onStage('news');
   const { articles, coverage } = await collectNews(config.sources, { fetchImpl, lookbackHours, maxPerSource });
   if (articles.length === 0) throw new Error('No articles collected from any source. Check network access and config/sources.json.');
 
-  onStage('extract');
-  const { signals, themes } = await extractSignals(articles, { client });
-  if (signals.length === 0) throw new Error('No investable signals were extracted from the collected articles.');
+  onStage('analyze');
+  const [{ signals, themes }, allEvents] = await Promise.all([
+    extractSignals(articles, { client }),
+    analyzeEvents(articles, { client }).catch((err) => {
+      warnings.push(`Global event analysis failed: ${err.message}`);
+      return [];
+    }),
+  ]);
+  const events = allEvents.slice(0, maxEvents);
+  const evSignals = eventSignals(events, signals);
+  if (signals.length + evSignals.length === 0) throw new Error('No investable signals were extracted from the collected articles.');
 
   onStage('consensus');
   const sourcesWithArticles = coverage.filter((c) => c.articles > 0).length;
-  const entities = buildConsensus(signals, { totalSources: sourcesWithArticles });
+  const entities = buildConsensus([...signals, ...evSignals], { totalSources: sourcesWithArticles });
   const excluded = new Set((profile.excluded_symbols ?? []).map((s) => s.toUpperCase()));
   const candidates = selectCandidates(entities.filter((e) => !excluded.has(e.symbol)), {
     minSources,
     maxCandidates: Math.max(40, maxPicks * 2),
   });
-  log(`${entities.length} assets mentioned; ${candidates.length} candidates selected`);
+  log(`${events.length} global events; ${entities.length} assets mentioned; ${candidates.length} candidates selected`);
 
   onStage('market');
-  const backdropSymbols = Object.keys(config.marketBackdrop ?? {});
-  const { quotes, failed } = await fetchQuotes([...candidates.map((c) => c.symbol), ...backdropSymbols], { fetchImpl });
+  const mapSymbols = Object.values(config.marketMap ?? {}).flatMap((group) => Object.keys(group));
+  const channelSymbols = events.flatMap((e) => e.channels.map((c) => c.symbol));
+  const { quotes, series, failed } = await fetchQuotes(
+    [...candidates.map((c) => c.symbol), ...channelSymbols, ...mapSymbols],
+    { fetchImpl },
+  );
+  const marketMap = buildMarketMap(config.marketMap, quotes);
+  const reactedEvents = measureReactions(events, quotes, series);
+
   // Drop symbols the market data provider does not recognise; they are usually mis-mapped tickers.
   const priced = candidates.filter((c) => quotes[c.symbol]);
-  const scored = scoreCandidates(priced.length >= minPicks ? priced : candidates, quotes);
-  const backdrop = backdropSymbols
-    .filter((s) => quotes[s])
-    .map((s) => ({ symbol: s, label: config.marketBackdrop[s], ...quotes[s] }));
+  const scored = linkEvents(scoreCandidates(priced.length >= minPicks ? priced : candidates, quotes), reactedEvents);
   const themeSummary = topThemes(themes);
 
   onStage('advise');
   const advice = await generateAdvice({
     candidates: scored,
+    events: reactedEvents,
+    marketMap,
     themes: themeSummary,
-    backdrop: backdrop.map(({ symbol, label, price, change1dPct, change1moPct, trend }) => ({ symbol, label, price, change1dPct, change1moPct, trend })),
     profile,
     minPicks,
     maxPicks,
     client,
   });
-  if (failed.length) advice.warnings.push(`No market data for: ${failed.join(', ')}`);
+  advice.warnings.push(...warnings);
+  const unpriced = failed.filter((s) => !mapSymbols.includes(s));
+  if (unpriced.length) advice.warnings.push(`No market data for: ${unpriced.join(', ')}`);
 
   const report = {
     meta: {
       generatedAt: new Date().toISOString(),
+      lookbackHours,
       articleCount: articles.length,
       sourcesWithArticles,
       signalCount: signals.length,
+      eventCount: events.length,
       entityCount: entities.length,
       pricedCount: priced.length,
       coverage,
     },
     profile,
-    backdrop,
+    events: reactedEvents,
+    marketMap,
     themes: themeSummary,
     candidates: scored,
     advice,

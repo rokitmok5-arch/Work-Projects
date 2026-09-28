@@ -1,5 +1,5 @@
 {
-  "_comment": "News sources the advisor cross-references. Each source lists one or more RSS feeds. If every feed fails or returns nothing, googleNewsQuery is used as a fallback (Google News RSS search restricted to that site). fullText=true fetches the article page for more context and is only enabled for outlets without a hard paywall.",
+  "_comment": "News sources the advisor cross-references, covering both markets and global affairs. Each source lists RSS feeds; articles are balanced across feeds. If every feed fails or returns nothing, googleNewsQueries are used as a fallback (Google News RSS search restricted to that site). fullText=true fetches the article page for more context and is only enabled for outlets without a hard paywall.",
   "sources": [
     {
       "id": "bbc",
@@ -7,16 +7,19 @@
       "fullText": true,
       "feeds": [
         "https://feeds.bbci.co.uk/news/business/rss.xml",
-        "https://feeds.bbci.co.uk/news/world/rss.xml"
+        "https://feeds.bbci.co.uk/news/world/rss.xml",
+        "https://feeds.bbci.co.uk/news/world/middle_east/rss.xml",
+        "https://feeds.bbci.co.uk/news/world/asia/rss.xml",
+        "https://feeds.bbci.co.uk/news/world/europe/rss.xml"
       ],
-      "googleNewsQuery": "site:bbc.com business OR economy OR markets"
+      "googleNewsQueries": ["site:bbc.com business OR economy OR markets", "site:bbc.com world"]
     },
     {
       "id": "aljazeera",
       "name": "Al Jazeera",
       "fullText": true,
       "feeds": ["https://www.aljazeera.com/xml/rss/all.xml"],
-      "googleNewsQuery": "site:aljazeera.com economy OR business OR markets"
+      "googleNewsQueries": ["site:aljazeera.com economy OR business OR markets", "site:aljazeera.com news"]
     },
     {
       "id": "business-insider",
@@ -26,7 +29,7 @@
         "https://feeds.businessinsider.com/custom/all",
         "https://markets.businessinsider.com/rss/news"
       ],
-      "googleNewsQuery": "site:businessinsider.com markets OR stocks OR economy"
+      "googleNewsQueries": ["site:businessinsider.com markets OR stocks OR economy", "site:businessinsider.com politics OR world"]
     },
     {
       "id": "forbes",
@@ -36,7 +39,7 @@
         "https://www.forbes.com/business/feed/",
         "https://www.forbes.com/investing/feed/"
       ],
-      "googleNewsQuery": "site:forbes.com investing OR markets OR stocks"
+      "googleNewsQueries": ["site:forbes.com investing OR markets OR stocks", "site:forbes.com geopolitics OR world OR policy"]
     },
     {
       "id": "nyt",
@@ -45,9 +48,10 @@
       "feeds": [
         "https://rss.nytimes.com/services/xml/rss/nyt/Business.xml",
         "https://rss.nytimes.com/services/xml/rss/nyt/Economy.xml",
-        "https://rss.nytimes.com/services/xml/rss/nyt/World.xml"
+        "https://rss.nytimes.com/services/xml/rss/nyt/World.xml",
+        "https://rss.nytimes.com/services/xml/rss/nyt/Politics.xml"
       ],
-      "googleNewsQuery": "site:nytimes.com business OR economy OR markets"
+      "googleNewsQueries": ["site:nytimes.com business OR economy OR markets", "site:nytimes.com world OR politics"]
     },
     {
       "id": "wsj",
@@ -58,24 +62,82 @@
         "https://feeds.a.dj.com/rss/RSSWorldNews.xml",
         "https://feeds.a.dj.com/rss/WSJcomUSBusiness.xml"
       ],
-      "googleNewsQuery": "site:wsj.com markets OR economy OR business"
+      "googleNewsQueries": ["site:wsj.com markets OR economy OR business", "site:wsj.com world OR politics"]
     },
     {
       "id": "ap",
       "name": "Associated Press",
       "fullText": false,
       "feeds": [],
-      "googleNewsQuery": "site:apnews.com business OR economy OR markets"
+      "googleNewsQueries": ["site:apnews.com business OR economy OR markets", "site:apnews.com world OR politics OR conflict OR election"]
     }
   ],
-  "marketBackdrop": {
-    "SPY": "S&P 500 ETF",
-    "QQQ": "Nasdaq-100 ETF",
-    "^VIX": "CBOE Volatility Index",
-    "^TNX": "US 10-Year Treasury Yield",
-    "DX-Y.NYB": "US Dollar Index",
-    "GC=F": "Gold Futures",
-    "CL=F": "WTI Crude Oil Futures",
-    "BTC-USD": "Bitcoin"
+  "marketMap": {
+    "US equities": {
+      "SPY": "S&P 500",
+      "QQQ": "Nasdaq-100",
+      "IWM": "Russell 2000 small caps"
+    },
+    "US sectors": {
+      "XLK": "Technology",
+      "SMH": "Semiconductors",
+      "XLE": "Energy",
+      "XLF": "Financials",
+      "XLV": "Health care",
+      "XLI": "Industrials",
+      "ITA": "Aerospace & defense",
+      "XLU": "Utilities",
+      "XLP": "Consumer staples",
+      "XLY": "Consumer discretionary",
+      "XLB": "Materials",
+      "XLRE": "Real estate",
+      "XLC": "Communication services"
+    },
+    "Global regions": {
+      "VGK": "Europe",
+      "EWG": "Germany",
+      "EWU": "United Kingdom",
+      "EWJ": "Japan",
+      "FXI": "China large caps",
+      "EWT": "Taiwan",
+      "EWY": "South Korea",
+      "INDA": "India",
+      "EWZ": "Brazil",
+      "EWW": "Mexico",
+      "KSA": "Saudi Arabia",
+      "EZA": "South Africa",
+      "EEM": "Emerging markets"
+    },
+    "Rates & credit": {
+      "^TNX": "US 10-year yield",
+      "^IRX": "US 13-week T-bill yield",
+      "TLT": "Long-dated Treasuries",
+      "HYG": "High-yield credit"
+    },
+    "Currencies": {
+      "DX-Y.NYB": "US dollar index",
+      "EURUSD=X": "Euro / dollar",
+      "JPY=X": "Dollar / yen",
+      "CNY=X": "Dollar / yuan",
+      "GBPUSD=X": "Pound / dollar"
+    },
+    "Commodities": {
+      "CL=F": "WTI crude oil",
+      "BZ=F": "Brent crude oil",
+      "NG=F": "Natural gas",
+      "GC=F": "Gold",
+      "SI=F": "Silver",
+      "HG=F": "Copper",
+      "ZW=F": "Wheat",
+      "ZC=F": "Corn"
+    },
+    "Crypto": {
+      "BTC-USD": "Bitcoin",
+      "ETH-USD": "Ethereum",
+      "SOL-USD": "Solana"
+    },
+    "Volatility": {
+      "^VIX": "S&P 500 volatility (VIX)"
+    }
   }
 }

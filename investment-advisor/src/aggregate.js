@@ -130,3 +130,24 @@ export function topThemes(themes, limit = 15) {
     .slice(0, limit)
     .map((e) => ({ theme: e.theme, mentions: e.count, sources: [...e.sources].sort() }));
 }
+
+/** Attach the global events that move each candidate, with the market's reaction so far. */
+export function linkEvents(candidates, events) {
+  return candidates.map((c) => ({
+    ...c,
+    events: events.flatMap((e) =>
+      e.channels
+        .filter((ch) => ch.symbol === c.symbol)
+        .map((ch) => ({
+          event: e.name,
+          severity: e.severity,
+          outlets: e.outlets.length,
+          direction: ch.direction,
+          order: ch.order,
+          mechanism: ch.mechanism,
+          reaction: ch.reaction,
+          moveSincePct: ch.moveSincePct ?? null,
+        })),
+    ),
+  }));
+}
