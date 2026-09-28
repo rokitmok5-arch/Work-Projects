@@ -1,0 +1,81 @@
+{
+  "_comment": "News sources the advisor cross-references. Each source lists one or more RSS feeds. If every feed fails or returns nothing, googleNewsQuery is used as a fallback (Google News RSS search restricted to that site). fullText=true fetches the article page for more context and is only enabled for outlets without a hard paywall.",
+  "sources": [
+    {
+      "id": "bbc",
+      "name": "BBC",
+      "fullText": true,
+      "feeds": [
+        "https://feeds.bbci.co.uk/news/business/rss.xml",
+        "https://feeds.bbci.co.uk/news/world/rss.xml"
+      ],
+      "googleNewsQuery": "site:bbc.com business OR economy OR markets"
+    },
+    {
+      "id": "aljazeera",
+      "name": "Al Jazeera",
+      "fullText": true,
+      "feeds": ["https://www.aljazeera.com/xml/rss/all.xml"],
+      "googleNewsQuery": "site:aljazeera.com economy OR business OR markets"
+    },
+    {
+      "id": "business-insider",
+      "name": "Business Insider",
+      "fullText": false,
+      "feeds": [
+        "https://feeds.businessinsider.com/custom/all",
+        "https://markets.businessinsider.com/rss/news"
+      ],
+      "googleNewsQuery": "site:businessinsider.com markets OR stocks OR economy"
+    },
+    {
+      "id": "forbes",
+      "name": "Forbes",
+      "fullText": false,
+      "feeds": [
+        "https://www.forbes.com/business/feed/",
+        "https://www.forbes.com/investing/feed/"
+      ],
+      "googleNewsQuery": "site:forbes.com investing OR markets OR stocks"
+    },
+    {
+      "id": "nyt",
+      "name": "New York Times",
+      "fullText": false,
+      "feeds": [
+        "https://rss.nytimes.com/services/xml/rss/nyt/Business.xml",
+        "https://rss.nytimes.com/services/xml/rss/nyt/Economy.xml",
+        "https://rss.nytimes.com/services/xml/rss/nyt/World.xml"
+      ],
+      "googleNewsQuery": "site:nytimes.com business OR economy OR markets"
+    },
+    {
+      "id": "wsj",
+      "name": "Wall Street Journal",
+      "fullText": false,
+      "feeds": [
+        "https://feeds.a.dj.com/rss/RSSMarketsMain.xml",
+        "https://feeds.a.dj.com/rss/RSSWorldNews.xml",
+        "https://feeds.a.dj.com/rss/WSJcomUSBusiness.xml"
+      ],
+      "googleNewsQuery": "site:wsj.com markets OR economy OR business"
+    },
+    {
+      "id": "ap",
+      "name": "Associated Press",
+      "fullText": false,
+      "feeds": [],
+      "googleNewsQuery": "site:apnews.com business OR economy OR markets"
+    }
+  ],
+  "marketBackdrop": {
+    "SPY": "S&P 500 ETF",
+    "QQQ": "Nasdaq-100 ETF",
+    "^VIX": "CBOE Volatility Index",
+    "^TNX": "US 10-Year Treasury Yield",
+    "DX-Y.NYB": "US Dollar Index",
+    "GC=F": "Gold Futures",
+    "CL=F": "WTI Crude Oil Futures",
+    "BTC-USD": "Bitcoin"
+  }
+}

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Sample Business News</title>
+    <item>
+      <title>Chipmakers rally as AI data-centre spending surges - Sample Outlet</title>
+      <link>https://example.com/chips</link>
+      <pubDate>PUBDATE_RECENT</pubDate>
+      <description><![CDATA[<p>Nvidia and other <b>semiconductor</b> firms rose after cloud giants raised capex guidance.</p>]]></description>
+    </item>
+    <item>
+      <title>Oil climbs after shipping disruption in the Red Sea</title>
+      <link>https://example.com/oil</link>
+      <pubDate>PUBDATE_RECENT</pubDate>
+      <description>Brent and WTI crude futures gained as tankers rerouted.</description>
+    </item>
+    <item>
+      <title>An old story that should be filtered out</title>
+      <link>https://example.com/old</link>
+      <pubDate>Mon, 01 Jan 2024 00:00:00 GMT</pubDate>
+      <description>Stale.</description>
+    </item>
+  </channel>
+</rss>

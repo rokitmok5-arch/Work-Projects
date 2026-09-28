@@ -1,0 +1,26 @@
+{
+  "name": "investment-advisor-agent",
+  "version": "0.1.0",
+  "description": "AI agent that cross-references global news with live market data to produce investment research",
+  "main": "src/pipeline.js",
+  "scripts": {
+    "advise": "node src/cli.js",
+    "start": "node src/server.js",
+    "test": "node --test \"test/*.test.js\""
+  },
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.129.0",
+    "cheerio": "^1.2.0",
+    "cors": "^2.8.6",
+    "dotenv": "^18.0.4",
+    "express": "^5.2.1",
+    "rss-parser": "^3.13.0",
+    "zod": "^4.6.5"
+  },
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  }
+}

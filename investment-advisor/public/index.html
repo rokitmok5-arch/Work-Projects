@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Investment Advisor</title>
+  <style>
+    :root {
+      --bg: #f7f7f5; --panel: #ffffff; --text: #1d1d1f; --muted: #6b6b70; --line: #e4e4e0;
+      --accent: #1f6feb; --up: #1a7f37; --down: #cf222e; --warn: #9a6700;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #111214; --panel: #1a1b1e; --text: #ececec; --muted: #9a9aa0; --line: #2c2d31;
+              --accent: #4c8dff; --up: #3fb950; --down: #f85149; --warn: #d29922; }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, -apple-system, sans-serif; }
+    main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 64px; }
+    header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; }
+    h1 { font-size: 22px; margin: 0; }
+    h2 { font-size: 17px; margin: 28px 0 10px; }
+    .muted { color: var(--muted); }
+    button { background: var(--accent); color: #fff; border: 0; border-radius: 8px; padding: 9px 16px; font: inherit; cursor: pointer; }
+    button:disabled { opacity: .55; cursor: default; }
+    .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+    .disclaimer { font-size: 13px; color: var(--muted); border-left: 3px solid var(--warn); padding-left: 10px; margin: 16px 0; }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+    th { color: var(--muted); font-weight: 500; }
+    td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .up { color: var(--up); } .down { color: var(--down); }
+    .pill { display: inline-block; padding: 1px 8px; border-radius: 99px; font-size: 12px; border: 1px solid var(--line); }
+    details { border-bottom: 1px solid var(--line); padding: 10px 0; }
+    summary { cursor: pointer; font-weight: 600; }
+    details ul { margin: 8px 0 0; padding-left: 20px; }
+    a { color: var(--accent); }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>Investment Advisor</h1>
+      <div id="meta" class="muted">No report loaded.</div>
+    </div>
+    <div>
+      <span id="status" class="muted"></span>
+      <button id="run">Run new analysis</button>
+    </div>
+  </header>
+  <p class="disclaimer">AI-generated research from news headlines and public market data. Not personalized financial advice. Verify independently and consult a licensed advisor before investing.</p>
+  <div id="content"></div>
+</main>
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const pct = (v) => v == null ? 'n/a' : `<span class="${v >= 0 ? 'up' : 'down'}">${v > 0 ? '+' : ''}${v.toFixed(1)}%</span>`;
+const ACTION = { strong_buy: 'Strong buy', buy: 'Buy', accumulate: 'Accumulate', watch: 'Watch' };
+
+function render(r) {
+  const a = r.advice;
+  $('#meta').textContent = `Generated ${new Date(r.meta.generatedAt).toLocaleString()} · ${r.meta.articleCount} articles from ${r.meta.sourcesWithArticles} outlets · ${r.meta.pricedCount} assets priced`;
+  const rows = a.recommendations.map((x) => `<tr>
+      <td class="num">${x.rank}</td><td><strong>${esc(x.symbol)}</strong> <span class="muted">${esc(x.name)}</span></td>
+      <td>${esc(x.asset_class)}</td><td><span class="pill">${ACTION[x.action]}</span></td><td>${esc(x.conviction)}</td>
+      <td class="num">${x.suggested_allocation_pct}%</td><td class="num">${x.market?.price ?? 'n/a'}</td>
+      <td class="num">${pct(x.market?.change1moPct)}</td><td class="num">${x.sources.length}</td><td>${esc(x.market?.trend ?? 'n/a')}</td></tr>`).join('');
+  const details = a.recommendations.map((x) => `<details><summary>${x.rank}. ${esc(x.symbol)} — ${esc(x.name)}</summary>
+      <p>${esc(x.thesis)}</p><ul>
+      <li><strong>News consensus:</strong> ${esc(x.news_consensus)}</li>
+      <li><strong>Market:</strong> ${esc(x.market_confirmation)}</li>
+      <li><strong>Catalysts:</strong> ${esc(x.catalysts.join('; '))}</li>
+      <li><strong>Risks:</strong> ${esc(x.key_risks.join('; '))}</li>
+      <li><strong>Entry:</strong> ${esc(x.entry_note)}</li>
+      ${x.evidence.filter((e) => e.link).slice(0, 4).map((e) => `<li><a href="${esc(e.link)}" target="_blank" rel="noopener">${esc(e.source)}: ${esc(e.title)}</a></li>`).join('')}
+      </ul></details>`).join('');
+  $('#content').innerHTML = `
+    <section class="panel"><h2 style="margin-top:0">Market overview</h2><p>${esc(a.market_overview)}</p>
+      <ul>${a.key_themes.map((t) => `<li><strong>${esc(t.theme)}</strong> — ${esc(t.implication)}</li>`).join('')}</ul></section>
+    <h2>Top ${a.recommendations.length} picks</h2>
+    <div class="panel table-wrap"><table>
+      <thead><tr><th class="num">#</th><th>Asset</th><th>Class</th><th>Action</th><th>Conviction</th><th class="num">Alloc.</th><th class="num">Price</th><th class="num">1mo</th><th class="num">Outlets</th><th>Trend</th></tr></thead>
+      <tbody>${rows}<tr><td></td><td>Cash</td><td></td><td></td><td></td><td class="num">${a.cash_allocation_pct}%</td><td colspan="4"></td></tr></tbody></table></div>
+    <h2>Details</h2><div class="panel">${details}</div>
+    ${a.avoid.length ? `<h2>Avoid / reduce</h2><div class="panel"><ul>${a.avoid.map((x) => `<li><strong>${esc(x.symbol)}</strong> ${esc(x.name)} — ${esc(x.reason)}</li>`).join('')}</ul></div>` : ''}
+    <h2>Portfolio notes</h2><div class="panel"><p>${esc(a.portfolio_notes)}</p></div>
+    ${a.warnings.length ? `<h2>Pipeline warnings</h2><div class="panel"><ul>${a.warnings.map((w) => `<li>${esc(w)}</li>`).join('')}</ul></div>` : ''}`;
+}
+
+async function loadLatest() {
+  const res = await fetch('/api/report/latest');
+  if (res.ok) render(await res.json());
+}
+
+async function poll() {
+  const { job } = await (await fetch('/api/status')).json();
+  $('#run').disabled = job.running;
+  $('#status').textContent = job.running ? `Running: ${job.stage}…` : job.error ? `Last run failed: ${job.error}` : '';
+  if (job.running) setTimeout(poll, 3000);
+  else if (job.finishedAt && !job.error) loadLatest();
+}
+
+$('#run').addEventListener('click', async () => {
+  await fetch('/api/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+  poll();
+});
+
+loadLatest();
+poll();
+</script>
+</body>
+</html>
