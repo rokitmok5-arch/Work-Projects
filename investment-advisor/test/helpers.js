@@ -37,3 +37,12 @@ export function chartPayload(symbol, { start = 100, dailyDrift = 0.004, days = 2
 export function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 }
+
+/** An RSS feed whose items were all published an hour ago. */
+export function feedXml(items) {
+  const pubDate = new Date(Date.now() - 3600 * 1000).toUTCString();
+  const body = items
+    .map((it, i) => `<item><title>${it.title}</title><link>https://example.com/${encodeURIComponent(it.title)}</link><pubDate>${pubDate}</pubDate><description>${it.description ?? ''}</description></item>`)
+    .join('\n');
+  return `<?xml version="1.0"?><rss version="2.0"><channel><title>t</title>${body}</channel></rss>`;
+}

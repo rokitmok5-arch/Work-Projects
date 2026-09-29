@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { collectNews } from './news.js';
 import { extractSignals } from './extract.js';
 import { buildConsensus, selectCandidates, scoreCandidates, topThemes, linkEvents } from './aggregate.js';
-import { analyzeEvents, eventSignals, measureReactions } from './events.js';
+import { analyzeEvents, eventSignals, mergeWithMemory, measureForecasts, openTrackedEvents, updateMemory, summarizeScorecard } from './events.js';
 import { fetchQuotes, buildMarketMap } from './market.js';
 import { generateAdvice } from './advise.js';
 import { renderMarkdown } from './report.js';
@@ -19,6 +19,18 @@ export async function loadJson(file) {
 
 export async function loadConfig() {
   return loadJson(path.join(ROOT, 'config', 'sources.json'));
+}
+
+const MEMORY_FILE = 'event-memory.json';
+
+/** Events and forecasts carried between runs, so delayed effects stay tracked. */
+export async function loadMemory(dir = REPORTS_DIR) {
+  try {
+    return await loadJson(path.join(dir, MEMORY_FILE));
+  } catch (err) {
+    if (err.code === 'ENOENT') return { version: 1, events: [], scorecard: { resolved: [] } };
+    throw err;
+  }
 }
 
 export async function loadProfile(file) {
@@ -39,8 +51,11 @@ export async function loadProfile(file) {
  *     -> Claude: per-article signals  +  Claude: global events and their transmission channels
  *     -> cross-outlet consensus
  *     -> live market data for candidates, event channels and the cross-asset market map
- *     -> how the market has reacted to each event so far
+ *     -> each event forecast vs. how far the market has moved since the event broke
  *     -> Claude advisory synthesis -> report
+ * Events and forecasts persist between runs (event memory) so slow effects, such
+ * as a tariff feeding through to prices over weeks, stay tracked and are graded
+ * when their window closes.
  */
 export async function runPipeline({
   profile,
@@ -53,10 +68,13 @@ export async function runPipeline({
   maxEvents = 15,
   fetchImpl = fetch,
   client,
+  memory,
+  now = Date.now(),
   onStage = () => {},
 } = {}) {
   config ??= await loadConfig();
   profile ??= await loadProfile();
+  memory ??= await loadMemory();
   const warnings = [];
 
   onStage('news');
@@ -66,12 +84,13 @@ export async function runPipeline({
   onStage('analyze');
   const [{ signals, themes }, allEvents] = await Promise.all([
     extractSignals(articles, { client }),
-    analyzeEvents(articles, { client }).catch((err) => {
+    analyzeEvents(articles, { client, tracked: openTrackedEvents(memory) }).catch((err) => {
       warnings.push(`Global event analysis failed: ${err.message}`);
       return [];
     }),
   ]);
-  const events = allEvents.slice(0, maxEvents);
+  const byImpact = (a, b) => b.independentReports * b.severity - a.independentReports * a.severity;
+  const events = mergeWithMemory(allEvents.sort(byImpact).slice(0, maxEvents), memory);
   const evSignals = eventSignals(events, signals);
   if (signals.length + evSignals.length === 0) throw new Error('No investable signals were extracted from the collected articles.');
 
@@ -93,18 +112,21 @@ export async function runPipeline({
     { fetchImpl },
   );
   const marketMap = buildMarketMap(config.marketMap, quotes);
-  const reactedEvents = measureReactions(events, quotes, series);
+  const measuredEvents = measureForecasts(events, quotes, series, now);
+  const nextMemory = updateMemory(measuredEvents, memory, now);
+  const scorecard = summarizeScorecard(nextMemory);
 
   // Drop symbols the market data provider does not recognise; they are usually mis-mapped tickers.
   const priced = candidates.filter((c) => quotes[c.symbol]);
-  const scored = linkEvents(scoreCandidates(priced.length >= minPicks ? priced : candidates, quotes), reactedEvents);
+  const scored = scoreCandidates(linkEvents(priced.length >= minPicks ? priced : candidates, measuredEvents), quotes);
   const themeSummary = topThemes(themes);
 
   onStage('advise');
   const advice = await generateAdvice({
     candidates: scored,
-    events: reactedEvents,
+    events: measuredEvents,
     marketMap,
+    scorecard,
     themes: themeSummary,
     profile,
     minPicks,
@@ -123,16 +145,19 @@ export async function runPipeline({
       sourcesWithArticles,
       signalCount: signals.length,
       eventCount: events.length,
+      trackedEventCount: events.filter((e) => e.continuesTracked).length,
       entityCount: entities.length,
       pricedCount: priced.length,
       coverage,
     },
     profile,
-    events: reactedEvents,
+    events: measuredEvents,
     marketMap,
+    scorecard,
     themes: themeSummary,
     candidates: scored,
     advice,
+    memory: nextMemory,
   };
   report.markdown = renderMarkdown(report);
   onStage('done');
@@ -143,7 +168,8 @@ export async function saveReport(report, dir = REPORTS_DIR) {
   await fs.mkdir(dir, { recursive: true });
   const stamp = report.meta.generatedAt.replace(/[:.]/g, '-');
   const base = path.join(dir, `advice-${stamp}`);
-  const { markdown, ...json } = report;
+  const { markdown, memory, ...json } = report;
+  if (memory) await fs.writeFile(path.join(dir, MEMORY_FILE), JSON.stringify(memory, null, 2));
   await fs.writeFile(`${base}.json`, JSON.stringify(json, null, 2));
   await fs.writeFile(`${base}.md`, markdown);
   await fs.writeFile(path.join(dir, 'latest.json'), JSON.stringify(json, null, 2));

@@ -70,3 +70,25 @@ test('topThemes ranks by outlet breadth', () => {
   assert.equal(themes[0].theme, 'Fed rate cuts');
   assert.deepEqual(themes[0].sources, ['BBC', 'Forbes']);
 });
+
+test('outlets republishing one wire story count as a single independent report', async () => {
+  const { independentReports } = await import('../src/aggregate.js');
+  const wire = (source) => ({ ...sig('NVDA', source, 'bullish'), storyId: 'ap-1' });
+  assert.equal(independentReports([wire('BBC'), wire('Forbes'), wire('Wall Street Journal')]), 1);
+  assert.equal(independentReports([wire('BBC'), wire('Forbes'), { ...sig('NVDA', 'Al Jazeera', 'bullish'), storyId: 'aj-7' }]), 2);
+
+  const [syndicated] = buildConsensus([wire('BBC'), wire('Forbes'), wire('Wall Street Journal')], { totalSources: 7 });
+  assert.equal(syndicated.sourceCount, 1);
+  assert.equal(syndicated.outletCount, 3);
+  assert.deepEqual(selectCandidates([syndicated], { minSources: 2, minCandidates: 0 }), []);
+});
+
+test('forecast score rewards aligned moves that are still ahead, not ones priced in', async () => {
+  const { forecastScore } = await import('../src/aggregate.js');
+  const ev = (status, remainingPct, extra = {}) => ({ direction: 'up', status, confidence: 'high', expectedMovePct: 10, remainingPct, ...extra });
+  assert.equal(forecastScore({ stance: 'bullish', events: [ev('ahead of the move', 10)] }), 1);
+  assert.equal(forecastScore({ stance: 'bullish', events: [ev('underway', 5, { confidence: 'medium' })] }), 0.35);
+  assert.equal(forecastScore({ stance: 'bullish', events: [ev('priced in', 1)] }), 0);
+  assert.equal(forecastScore({ stance: 'bearish', events: [ev('ahead of the move', 10)] }), 0);
+  assert.equal(forecastScore({ stance: 'bullish' }), 0);
+});

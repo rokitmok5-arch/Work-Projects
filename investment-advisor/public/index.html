@@ -58,8 +58,36 @@ const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const pct = (v) => v == null ? 'n/a' : `<span class="${v > 0 ? 'up' : v < 0 ? 'down' : 'muted'}">${v > 0 ? '+' : ''}${v.toFixed(1)}%</span>`;
 const ACTION = { strong_buy: 'Strong buy', buy: 'Buy', accumulate: 'Accumulate', watch: 'Watch' };
 
-const REACTION = { reacting: ['reacting', 'up'], 'not yet reflected': ['not yet reflected', 'warn'], diverging: ['moving the other way', 'down'] };
-const reaction = (v) => { const [label, cls] = REACTION[v] ?? [v, 'muted']; return `<span class="${cls}">${esc(label)}</span>`; };
+const STATUS = {
+  'ahead of the move': ['ahead of the move', 'warn'], underway: ['underway', 'up'], 'priced in': ['priced in', 'muted'],
+  diverging: ['moving the other way', 'down'], 'not reacting': ['not reacting', 'down'], resolved: ['event resolved', 'muted'],
+};
+const status = (v) => { const [label, cls] = STATUS[v] ?? [v, 'muted']; return `<span class="${cls}">${esc(label)}</span>`; };
+const LAG = { immediate: 'days', weeks: 'weeks', months: 'months', long_term: '6+ months' };
+const CONF = { high: 3, medium: 2, low: 1 };
+
+function ahead(list) {
+  const rows = list
+    .flatMap((e) => e.channels.map((c) => ({ ...c, event: e.name })))
+    .filter((c) => c.status === 'ahead of the move' || c.status === 'underway')
+    .sort((a, b) => CONF[b.confidence] - CONF[a.confidence] || (b.remainingPct ?? 0) - (a.remainingPct ?? 0))
+    .slice(0, 20);
+  if (!rows.length) return '';
+  return `<h2>Forecast: moves still ahead</h2><p class="muted">Effects of reported events that have not fully reached prices yet. Estimates, not certainties.</p>
+    <div class="panel table-wrap"><table><thead><tr><th>Asset</th><th>Dir.</th><th>Driven by</th><th>Lands in</th><th class="num">Expected</th><th class="num">So far</th><th>Window closes</th><th>Confidence</th></tr></thead><tbody>
+    ${rows.map((c) => `<tr><td><strong>${esc(c.symbol)}</strong> <span class="muted">${esc(c.name)}</span></td><td>${c.direction === 'up' ? '▲' : '▼'}</td><td>${esc(c.event)}</td><td>${LAG[c.lag]}</td>
+      <td class="num">${c.expectedMovePct.toFixed(1)}%</td><td class="num">${pct(c.movedPct)}</td><td>${esc(c.windowEnds?.slice(0, 10))}</td><td>${esc(c.confidence)}</td></tr>`).join('')}
+    </tbody></table></div>`;
+}
+
+function trackRecord(sc) {
+  if (!sc) return '';
+  const body = sc.graded === 0
+    ? '<p class="muted">No forecasts have reached the end of their window yet. They are graded automatically as windows close.</p>'
+    : `<p>${sc.graded} forecasts graded: <strong>${sc.hits} hits</strong>, ${sc.partial} partial, ${sc.misses} misses (hit rate ${Math.round(sc.hitRate * 100)}%).</p>
+       <ul>${sc.recent.map((r) => `<li>${esc(r.outcome.toUpperCase())}: ${esc(r.symbol)} ${esc(r.direction)} on “${esc(r.event)}”, forecast ${r.expectedMovePct.toFixed(1)}%, moved ${pct(r.movedPct)}</li>`).join('')}</ul>`;
+  return `<h2>Forecast track record</h2><div class="panel">${body}</div>`;
+}
 
 function flux(map) {
   if (!map?.anomalies?.length) return '';
@@ -73,10 +101,10 @@ function flux(map) {
 
 function events(list) {
   if (!list.length) return '';
-  return `<h2>Global events → market transmission</h2><div class="panel">${list.map((e) => `<details><summary>${esc(e.name)} <span class="pill">severity ${e.severity}/5</span> <span class="muted">${e.outlets.length} outlets</span></summary>
-    <p>${esc(e.summary)}</p><p class="muted">${esc(e.outlets.join(', '))} · ${esc(e.regions.join(', ') || 'global')}</p>
-    <div class="table-wrap"><table><thead><tr><th>Asset</th><th>Expected</th><th>Order</th><th>Mechanism</th><th class="num">Since</th><th>Market</th></tr></thead><tbody>
-    ${e.channels.map((c) => `<tr><td><strong>${esc(c.symbol)}</strong></td><td>${c.direction === 'up' ? '▲' : '▼'}</td><td>${esc(c.order)}</td><td style="white-space:normal">${esc(c.mechanism)}</td><td class="num">${pct(c.moveSincePct)}</td><td>${reaction(c.reaction)}</td></tr>`).join('')}
+  return `<h2>Global events → market transmission</h2><div class="panel">${list.map((e) => `<details><summary>${esc(e.name)} <span class="pill">severity ${e.severity}/5</span> <span class="pill">${esc(e.status.replace(/_/g, ' '))}</span> <span class="muted">${e.independentReports} independent reports${e.ongoing ? ' · ongoing' : ''}</span></summary>
+    <p>${esc(e.summary)}</p><p class="muted">${esc(e.outlets.join(', '))} · ${esc(e.regions.join(', ') || 'global')} · first reported ${esc(e.firstReported?.slice(0, 10))}${e.effectiveDate ? ` · effective ${esc(e.effectiveDate)}` : ''}</p>
+    <div class="table-wrap"><table><thead><tr><th>Asset</th><th>Dir.</th><th>Order</th><th>Mechanism</th><th>Lands in</th><th class="num">Expected</th><th class="num">So far</th><th>Status</th></tr></thead><tbody>
+    ${e.channels.map((c) => `<tr><td><strong>${esc(c.symbol)}</strong></td><td>${c.direction === 'up' ? '▲' : '▼'}</td><td>${esc(c.order)}</td><td style="white-space:normal">${esc(c.mechanism)}</td><td>${LAG[c.lag]}</td><td class="num">${c.expectedMovePct.toFixed(1)}%</td><td class="num">${pct(c.movedPct)}</td><td>${status(c.status)}</td></tr>`).join('')}
     </tbody></table></div><p><em>Outlook:</em> ${esc(e.outlook)}</p></details>`).join('')}</div>`;
 }
 
@@ -91,7 +119,9 @@ function render(r) {
   const details = a.recommendations.map((x) => `<details><summary>${x.rank}. ${esc(x.symbol)} — ${esc(x.name)}</summary>
       <p>${esc(x.thesis)}</p><ul>
       ${x.causal_chain && x.causal_chain !== 'company-specific' ? `<li><strong>Causal chain:</strong> ${esc(x.causal_chain)}</li>` : ''}
-      ${(x.events ?? []).map((e) => `<li><strong>Event:</strong> ${esc(e.event)} — expected ${esc(e.direction)}, ${reaction(e.reaction)}${e.moveSincePct != null ? ` (${pct(e.moveSincePct)} since)` : ''}</li>`).join('')}
+      ${x.expected_timing ? `<li><strong>Timing:</strong> ${esc(x.expected_timing)}${x.expected_move_pct ? ` · expected move ${pct(x.expected_move_pct)}` : ''}</li>` : ''}
+      ${(x.events ?? []).map((e) => `<li><strong>Event:</strong> ${esc(e.event)}${e.ongoing ? ' (ongoing)' : ''} — ${esc(e.direction)} over ${LAG[e.lag]}, ${status(e.status)}${e.movedPct != null ? ` (${pct(e.movedPct)} of a forecast ${e.expectedMovePct.toFixed(1)}%)` : ''}</li>`).join('')}
+      ${x.watch_signals?.length ? `<li><strong>Watch:</strong> ${esc(x.watch_signals.join('; '))}</li>` : ''}
       <li><strong>News consensus:</strong> ${esc(x.news_consensus)}</li>
       <li><strong>Market:</strong> ${esc(x.market_confirmation)}</li>
       <li><strong>Catalysts:</strong> ${esc(x.catalysts.join('; '))}</li>
@@ -101,7 +131,8 @@ function render(r) {
       </ul></details>`).join('');
   $('#content').innerHTML = `
     <section class="panel"><h2 style="margin-top:0">Market overview</h2><p>${esc(a.market_overview)}</p>
-      <ul>${a.event_analysis.map((t) => `<li><strong>${esc(t.event)}</strong> — ${esc(t.implication)}<br><span class="muted">Market read: ${esc(t.market_read)}</span></li>`).join('')}</ul></section>
+      <ul>${a.event_analysis.map((t) => `<li><strong>${esc(t.event)}</strong> — ${esc(t.implication)}<br><span class="muted">Market read: ${esc(t.market_read)}</span>${t.timeline ? `<br><span class="muted">Timeline: ${esc(t.timeline)}</span>` : ''}</li>`).join('')}</ul></section>
+    ${ahead(r.events ?? [])}
     ${flux(r.marketMap)}
     <h2>Top ${a.recommendations.length} picks</h2>
     <div class="panel table-wrap"><table>
@@ -111,6 +142,7 @@ function render(r) {
     ${a.avoid.length ? `<h2>Avoid / reduce</h2><div class="panel"><ul>${a.avoid.map((x) => `<li><strong>${esc(x.symbol)}</strong> ${esc(x.name)} — ${esc(x.reason)}</li>`).join('')}</ul></div>` : ''}
     <h2>Portfolio notes</h2><div class="panel"><p>${esc(a.portfolio_notes)}</p></div>
     ${events(r.events ?? [])}
+    ${trackRecord(r.scorecard)}
     ${a.warnings.length ? `<h2>Pipeline warnings</h2><div class="panel"><ul>${a.warnings.map((w) => `<li>${esc(w)}</li>`).join('')}</ul></div>` : ''}`;
 }
 

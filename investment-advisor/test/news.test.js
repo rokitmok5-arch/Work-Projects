@@ -43,3 +43,19 @@ test('balanceFeeds interleaves feeds so no single feed crowds out the rest', asy
   const out = balanceFeeds([mk('biz', 10), mk('world', 10), mk('dupe', 0)], 6).map((a) => a.id);
   assert.deepEqual(out, ['biz0', 'world0', 'biz1', 'world1', 'biz2', 'world2']);
 });
+
+test('clusterStories links wire copy across outlets but keeps distinct stories apart', async () => {
+  const { clusterStories } = await import('../src/news.js');
+  const articles = clusterStories([
+    { id: 'bbc-1', title: 'Oil prices surge as Iran closes Strait of Hormuz to tankers', summary: '' },
+    { id: 'wsj-1', title: 'Oil Prices Surge After Iran Closes Strait of Hormuz to Tankers', summary: '' },
+    { id: 'aj-1', title: 'Tehran defends move on shipping lane', summary: 'Iranian officials said the closure of the waterway to commercial tankers was a response to naval patrols and new sanctions on its exports' },
+    { id: 'nyt-1', title: 'What the Hormuz closure means', summary: 'Iranian officials said the closure of the waterway to commercial tankers was a response to naval patrols and new sanctions on its exports' },
+    { id: 'forbes-1', title: 'Fed holds rates steady amid inflation worries', summary: '' },
+  ]);
+  const story = Object.fromEntries(articles.map((a) => [a.id, a.storyId]));
+  assert.equal(story['bbc-1'], story['wsj-1']);
+  assert.equal(story['aj-1'], story['nyt-1']);
+  assert.notEqual(story['bbc-1'], story['aj-1']);
+  assert.equal(story['forbes-1'], 'forbes-1');
+});

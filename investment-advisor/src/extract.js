@@ -86,6 +86,7 @@ export async function extractSignals(articles, { batchSize = 30, concurrency = 3
         symbol: s.symbol.trim().toUpperCase(),
         strength: Math.min(5, Math.max(1, Math.round(s.strength))),
         articleId: article.id,
+        storyId: article.storyId,
         source: article.source,
         title: article.title,
         link: article.link,

@@ -127,6 +127,51 @@ async function fetchSource(source, { fetchImpl, lookbackHours, maxPerSource }) {
   };
 }
 
+const STOPWORDS = new Set(
+  'the and for with from that this into over after amid about says said will would could have has had are was were its their than more new what why how who but not'.split(' '),
+);
+
+function tokens(text = '') {
+  return new Set(
+    text
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .split(/\s+/)
+      .filter((w) => w.length >= 3 && !STOPWORDS.has(w)),
+  );
+}
+
+function jaccard(a, b) {
+  if (!a.size || !b.size) return 0;
+  let shared = 0;
+  for (const t of a) if (b.has(t)) shared++;
+  return shared / (a.size + b.size - shared);
+}
+
+/**
+ * Find articles that are the same underlying story, typically a wire (AP,
+ * Reuters) piece republished by several outlets under near-identical
+ * headlines or ledes. Each article gets a storyId; outlets that share a
+ * storyId are one voice, not independent corroboration.
+ */
+export function clusterStories(articles, { titleThreshold = 0.6, summaryThreshold = 0.6 } = {}) {
+  const parent = articles.map((_, i) => i);
+  const find = (i) => (parent[i] === i ? i : (parent[i] = find(parent[i])));
+  const titleTok = articles.map((a) => tokens(a.title));
+  const summaryTok = articles.map((a) => tokens(a.summary));
+
+  for (let i = 0; i < articles.length; i++) {
+    for (let j = i + 1; j < articles.length; j++) {
+      const sameTitle = titleTok[i].size >= 4 && titleTok[j].size >= 4 && jaccard(titleTok[i], titleTok[j]) >= titleThreshold;
+      const sameLede =
+        summaryTok[i].size >= 10 && summaryTok[j].size >= 10 && jaccard(summaryTok[i], summaryTok[j]) >= summaryThreshold;
+      if (sameTitle || sameLede) parent[find(i)] = find(j);
+    }
+  }
+  articles.forEach((a, i) => (a.storyId = articles[find(i)].id));
+  return articles;
+}
+
 /**
  * Collect recent articles from every configured source.
  * Returns { articles, coverage } where coverage records per-source counts and errors.
@@ -143,5 +188,8 @@ export async function collectNews(sources, { fetchImpl = fetch, lookbackHours = 
     log(`${c.source}: ${c.articles} articles${c.usedFallback ? ' (Google News fallback)' : ''}`);
     for (const e of c.errors) log(`  ! ${e}`);
   }
-  return { articles: results.flatMap((r) => r.articles), coverage };
+  const articles = clusterStories(results.flatMap((r) => r.articles));
+  const syndicated = articles.length - new Set(articles.map((a) => a.storyId)).size;
+  if (syndicated) log(`${syndicated} articles are republished copies of stories carried by other outlets`);
+  return { articles, coverage };
 }

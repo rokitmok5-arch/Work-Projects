@@ -4,10 +4,22 @@ const SENTIMENT_SIGN = { bullish: 1, bearish: -1, neutral: 0 };
 const INFERRED_WEIGHT = 0.6;
 
 /**
+ * How many independent reports back a claim: outlets that only republished the
+ * same wire story share one voice. Approximated as the smaller of the number of
+ * outlets and the number of distinct underlying stories.
+ */
+export function independentReports(signals) {
+  const outlets = new Set(signals.map((s) => s.source));
+  const stories = new Set(signals.map((s) => s.storyId ?? `${s.source}|${s.articleId ?? s.title}`));
+  return Math.min(outlets.size, stories.size);
+}
+
+/**
  * Cross-reference signals by symbol. An asset's news score rewards
- * (a) agreement in direction, (b) the number of distinct outlets reporting it,
+ * (a) agreement in direction, (b) the number of independent reports behind it,
  * and (c) signal strength, with diminishing returns on raw mention count so one
- * outlet running ten stories cannot outvote several independent outlets.
+ * outlet running ten stories, or ten outlets running one wire story, cannot
+ * outvote several independent outlets.
  */
 export function buildConsensus(signals, { totalSources }) {
   const groups = new Map();
@@ -19,6 +31,7 @@ export function buildConsensus(signals, { totalSources }) {
   const entities = [];
   for (const [symbol, list] of groups) {
     const sources = new Set(list.map((s) => s.source));
+    const independent = independentReports(list);
     let weighted = 0;
     let totalWeight = 0;
     const counts = { bullish: 0, bearish: 0, neutral: 0 };
@@ -29,7 +42,7 @@ export function buildConsensus(signals, { totalSources }) {
       counts[s.sentiment]++;
     }
     const netSentiment = totalWeight ? weighted / totalWeight : 0; // -1..1
-    const sourceCoverage = sources.size / Math.max(totalSources, 1); // 0..1
+    const sourceCoverage = independent / Math.max(totalSources, 1); // 0..1
     const newsScore = netSentiment * Math.sqrt(sourceCoverage) * (1 + Math.log(list.length)) * (totalWeight / list.length / 5);
 
     const names = list.map((s) => s.entity_name);
@@ -39,7 +52,8 @@ export function buildConsensus(signals, { totalSources }) {
       name: mode(names),
       assetClass: mode(assetClasses),
       mentions: list.length,
-      sourceCount: sources.size,
+      sourceCount: independent,
+      outletCount: sources.size,
       sources: [...sources].sort(),
       sentimentCounts: counts,
       netSentiment: round(netSentiment),
@@ -70,7 +84,7 @@ function mode(values) {
 
 /**
  * Keep the entities worth pricing: those corroborated by at least `minSources`
- * outlets, topped up with single-source names if too few qualify.
+ * independent reports, topped up with single-source names if too few qualify.
  */
 export function selectCandidates(entities, { minSources = 2, maxCandidates = 40, minCandidates = 25 } = {}) {
   const directional = entities.filter((e) => e.stance !== 'mixed');
@@ -98,10 +112,28 @@ export function marketConfirmation(stance, quote) {
 }
 
 const CONFIRMATION_SCORE = { confirmed: 1, neutral: 0.5, contradicted: 0, 'no market data': 0.25 };
+const CONFIDENCE_WEIGHT = { high: 1, medium: 0.7, low: 0.4 };
 
 /**
- * Attach market data and a composite score (65% news consensus, 35% market
- * confirmation). The composite ranks candidates before Claude's final review.
+ * The predictive part of the score: the best linked event forecast that points
+ * the same way as the news stance and still has most of its expected move ahead
+ * of it. An effect that is already priced in scores nothing here.
+ */
+export function forecastScore(candidate) {
+  let best = 0;
+  for (const ev of candidate.events ?? []) {
+    const aligned = (ev.direction === 'up') === (candidate.stance === 'bullish');
+    if (!aligned || !['ahead of the move', 'underway'].includes(ev.status)) continue;
+    const remaining = ev.expectedMovePct > 0 ? Math.min(1, Math.max(0, ev.remainingPct / ev.expectedMovePct)) : 0;
+    best = Math.max(best, CONFIDENCE_WEIGHT[ev.confidence] * remaining);
+  }
+  return best;
+}
+
+/**
+ * Attach market data and a composite score: 55% news consensus, 25% market
+ * confirmation, 20% forecast (expected move still to come). The composite
+ * ranks candidates before Claude's final review.
  */
 export function scoreCandidates(candidates, quotes) {
   const maxNews = Math.max(...candidates.map((c) => Math.abs(c.newsScore)), 1e-9);
@@ -109,8 +141,9 @@ export function scoreCandidates(candidates, quotes) {
     .map((c) => {
       const quote = quotes[c.symbol] ?? null;
       const confirmation = marketConfirmation(c.stance, quote);
-      const composite = 0.65 * (Math.abs(c.newsScore) / maxNews) + 0.35 * CONFIRMATION_SCORE[confirmation];
-      return { ...c, market: quote, confirmation, compositeScore: round(composite, 3) };
+      const forecast = forecastScore(c);
+      const composite = 0.55 * (Math.abs(c.newsScore) / maxNews) + 0.25 * CONFIRMATION_SCORE[confirmation] + 0.2 * forecast;
+      return { ...c, market: quote, confirmation, forecastScore: round(forecast), compositeScore: round(composite, 3) };
     })
     .sort((a, b) => b.compositeScore - a.compositeScore);
 }
@@ -131,7 +164,7 @@ export function topThemes(themes, limit = 15) {
     .map((e) => ({ theme: e.theme, mentions: e.count, sources: [...e.sources].sort() }));
 }
 
-/** Attach the global events that move each candidate, with the market's reaction so far. */
+/** Attach the global events that move each candidate, with each forecast and where it stands. */
 export function linkEvents(candidates, events) {
   return candidates.map((c) => ({
     ...c,
@@ -140,13 +173,25 @@ export function linkEvents(candidates, events) {
         .filter((ch) => ch.symbol === c.symbol)
         .map((ch) => ({
           event: e.name,
+          eventStatus: e.status,
+          effectiveDate: e.effectiveDate,
+          ongoing: e.ongoing,
           severity: e.severity,
           outlets: e.outlets.length,
+          independentReports: e.independentReports,
           direction: ch.direction,
           order: ch.order,
           mechanism: ch.mechanism,
-          reaction: ch.reaction,
-          moveSincePct: ch.moveSincePct ?? null,
+          lag: ch.lag,
+          confidence: ch.confidence,
+          expectedMovePct: ch.expectedMovePct,
+          movedPct: ch.movedPct ?? null,
+          pricedInPct: ch.pricedInPct ?? null,
+          remainingPct: ch.remainingPct ?? null,
+          status: ch.status,
+          since: ch.baseline,
+          windowEnds: ch.windowEnds,
+          leadingIndicators: ch.leadingIndicators,
         })),
     ),
   }));
