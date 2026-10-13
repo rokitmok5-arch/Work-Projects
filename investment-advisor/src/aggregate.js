@@ -172,6 +172,7 @@ export function linkEvents(candidates, events) {
       e.channels
         .filter((ch) => ch.symbol === c.symbol)
         .map((ch) => ({
+          eventId: e.id,
           event: e.name,
           eventStatus: e.status,
           effectiveDate: e.effectiveDate,

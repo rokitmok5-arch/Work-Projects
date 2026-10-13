@@ -35,7 +35,9 @@ The central idea: markets react to world events (conflicts, elections, sanctions
 8. **Remember and grade** (event memory): open events and forecasts are saved to `reports/event-memory.json`. On the next run, Claude sees the tracked events, and new articles about them extend the same event. Moves are still measured from the original date, and events with no new coverage stay in play until their forecast window closes. When a window closes, the forecast is graded: **hit** if the asset moved at least half the forecast in the predicted direction, **partial** if it moved the right way but less, **miss** otherwise. The hit rate, overall and by time horizon, goes back to the advisor so it can calibrate its confidence.
 9. **Advise** (`src/advise.js`): Claude ranks picks by independent corroboration, causal clarity, market confirmation and **how much of the expected move is still ahead**, favoring being early over chasing moves already priced in. The composite pre-ranking weights news consensus 55%, market confirmation 25% and remaining forecast move 20%. Each pick includes its causal chain, expected timing, expected move, what to watch for to confirm or exit, and allocation. Any ticker that wasn't among the analyzed candidates is discarded.
 
-The report opens with the market overview and **Forecast: moves still ahead**, then the picks. It ends with the full event transmission map, market flux, and the forecast track record.
+10. **Trade rules and positions** (`src/rules.js`, `src/portfolio.js`): fixed buy and sell rules turn the advice into concrete, sized orders for your actual portfolio. They're described under [Buy and sell rules](#buy-and-sell-rules) below.
+
+The report opens with **Trade signals**, then the market overview and **Forecast: moves still ahead**, then the picks. It ends with the full event transmission map, market flux, and the forecast track record.
 
 ## Setup
 
@@ -75,9 +77,64 @@ Set `ADVISOR_REFRESH_HOURS=24` to have the server refresh the analysis automatic
 
 A run takes a few minutes. It makes roughly one Claude call per 30 articles, one event-mapping and forecasting call, and one final call. With ~400 articles on `claude-opus-5-5`, expect roughly $2–4 per run. Set `ADVISOR_MODEL` to use a different model.
 
+## Buy and sell rules
+
+The advisor (Claude) decides *what* is worth owning. A fixed rule engine decides *when* to buy or sell and *how much*, using the same rules every time. All levels and comparisons use whole-number arithmetic (`src/money.js`): **prices to $0.001, percentages to 0.01%, quantities to 0.00000001**. A stop at $95.123 fires at $95.123 and not at $95.124, and nothing drifts from rounding. Suggested order prices are also rounded to a price the exchange accepts (whole cents for US stocks and ETFs above $1), in the safe direction: buy limits round down, stops round up.
+
+**Buy** (all must pass, otherwise the signal is **WAIT** with the reason and, where possible, the price at which it would pass):
+- the advisor rates it strong buy, buy or accumulate;
+- at least 2 independent reports back it;
+- RSI is 70 or below;
+- the price is no more than 8% above its 20-day average ("buy at or below $X");
+- the price trend doesn't contradict the thesis (unless a high-confidence forecast is still ahead of the move);
+- the profit target is at least as far away as the stop.
+
+**Size** is the smallest of three amounts:
+- the advisor's allocation, halved for "accumulate" and capped at 15% of the portfolio;
+- 1% of the portfolio at risk: shares = (1% of portfolio) ÷ (entry − stop);
+- available cash.
+
+Shares are whole unless fractional trading is enabled; crypto is always fractional.
+
+**Risk plan per position**:
+- **Stop:** entry − 2 × daily volatility × √10, clamped to 3–25%.
+- **Target:** the event forecast's expected move, or 2 × the risk if there's no forecast.
+- **Trailing stop:** once the gain equals the initial risk, the stop trails the highest price since entry by the same distance. It only ever moves up.
+
+**Sell / reduce** (checked in this order; the first that applies wins):
+
+| Rule | Action |
+|---|---|
+| Price at or below the stop or trailing stop | Sell all |
+| Advisor now lists it under *avoid* | Sell all |
+| Independent reporting has turned bearish | Sell all |
+| A linked event forecast is moving the other way, or the event resolved | Sell half |
+| Price at or above the target | Sell half; stop lifted to at least breakeven |
+| All linked forecasts priced in and RSI ≥ 75 | Sell half |
+| Forecast window closed and the trade is below half its initial risk in profit | Sell all (time stop) |
+| Position above 15% of the portfolio | Trim back to 15% |
+
+Every threshold is in `config/rules.json`.
+
+### Tracking positions
+
+```bash
+npm run portfolio -- init 10000              # start with $10,000 cash
+npm run portfolio -- buy NVDA 7 215.090      # record a fill; stop and target come from the latest BUY signal
+npm run portfolio -- buy XLE 3 90.556 --stop 85 --target 99 --fees 1
+npm run portfolio -- sell NVDA 2 230.001
+npm run portfolio                            # positions, cost basis, stops and targets
+npm run check                                # re-run all rules on fresh prices (no AI call, a few seconds)
+```
+
+The program **doesn't place trades**. It tells you what the rules say, and you record what you actually did. Cost basis includes fees, and realized profit and loss is tracked to $0.001. Positions live in `portfolio.json` (gitignored). The server also exposes `GET /api/portfolio`, `POST /api/trades` and `POST /api/check`, and the dashboard has a **Check prices now** button.
+
+**How often to check.** Precision in the arithmetic only helps if prices are checked often. A full analysis (`npm run advise`) runs once a day. `npm run check` is cheap, so run it every few minutes during market hours with cron, or set `ADVISOR_CHECK_MINUTES=5` on the server. Yahoo's free quotes can be delayed by up to ~15 minutes, so for intraday precision connect a real-time data feed in `fetchQuote` (`src/market.js`). For hard protection between checks, enter the suggested stop as a stop order at your broker.
+
 ## Configuration
 
 - **`config/sources.json`**: feeds per outlet, the Google News fallback queries, whether to fetch full text, and the market map (add any sector, country, currency or commodity you want watched). Publishers change feed URLs from time to time. If an outlet shows 0 articles or a fallback note in the report's *Source coverage* table, update its feed URL here.
+- **`config/rules.json`**: every buy, sizing and sell threshold described above.
 - **Consensus threshold**: `--min-sources` (default 2). Raise it for stricter cross-referencing. If too few assets qualify, the list is topped up with single-outlet names, and Claude sees each one's outlet count.
 
 ## Tests
@@ -86,12 +143,13 @@ A run takes a few minutes. It makes roughly one Claude call per 30 articles, one
 npm test
 ```
 
-The tests run fully offline. They cover feed parsing, balancing, fallback and wire-copy detection, the technical indicators, the market map, forecast measurement, event memory and grading, the consensus scoring, and end-to-end pipeline runs. Those runs check that a world-news-only story reaches the picks through the event map, that a republished wire story isn't double counted, and that a second run weeks later continues the same event and grades its expired forecasts. That run uses fake feeds, fake market data and a stubbed Claude client, and validates every stubbed response against the real output schemas.
+The tests run fully offline. Rule tests check each trigger at its exact boundary, for example that a stop fires at $95.123 but not at $95.124, and that a 0.004% move rounds to 0.00% while 0.005% rounds to 0.01%. They cover feed parsing, balancing, fallback and wire-copy detection, the technical indicators, the market map, forecast measurement, event memory and grading, the consensus scoring, and end-to-end pipeline runs. Those runs check that a world-news-only story reaches the picks through the event map, that a republished wire story isn't double counted, and that a second run weeks later continues the same event and grades its expired forecasts. That run uses fake feeds, fake market data and a stubbed Claude client, and validates every stubbed response against the real output schemas.
 
 ## Limitations
 
 - Headlines and summaries from paywalled outlets carry less detail than full articles. The agent reads only what the publishers make available in their feeds.
 - Yahoo Finance's chart endpoint is unofficial and rate-limited. For production use, swap `fetchQuote` in `src/market.js` for a licensed data provider.
+- The rules are deterministic, but they're only as good as the prices they're given and how often they run. Gaps (overnight or on news) can move a price straight through a stop, and a fill can land below it.
 - Forecast timing and size are Claude's estimates from the reporting, not a quantitative model. Treat them as hypotheses, and let the track record tell you how far to trust them.
 - A forecast is measured from when the agent first saw the event. A situation that started before the agent began tracking it may already be partly priced in.
 - Wire-copy detection compares wording. An outlet that rewrites a wire story heavily will still count as independent.

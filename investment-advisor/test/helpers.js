@@ -10,13 +10,13 @@ export function sampleFeedXml() {
     .replaceAll('PUBDATE_RECENT', new Date(Date.now() - 3600 * 1000).toUTCString());
 }
 
-/** A Yahoo chart payload with a steady trend of `dailyDrift` per day. */
-export function chartPayload(symbol, { start = 100, dailyDrift = 0.004, days = 260, instrumentType = 'EQUITY' } = {}) {
+/** A Yahoo chart payload trending `dailyDrift` per day, with alternating up and down days of +/- `swing`. */
+export function chartPayload(symbol, { start = 100, dailyDrift = 0.004, swing = 0.01, days = 260, instrumentType = 'EQUITY' } = {}) {
   const close = [];
   const volume = [];
   let p = start;
   for (let i = 0; i < days; i++) {
-    p *= 1 + dailyDrift + (i % 2 ? 0.003 : -0.003);
+    p *= 1 + dailyDrift + (i % 2 ? swing : -swing);
     close.push(p);
     volume.push(1_000_000 + (i % 5) * 10_000);
   }

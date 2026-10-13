@@ -31,6 +31,57 @@ function cell(v) {
   return String(v ?? '').replace(/\|/g, '\\|').replace(/\n/g, ' ');
 }
 
+const SIDE_ORDER = { SELL: 0, BUY: 1, WAIT: 2, HOLD: 3 };
+
+/**
+ * Trade signals from the rule engine plus the portfolio snapshot. Levels are
+ * exact to $0.001; "order" prices are snapped to a valid exchange tick.
+ */
+export function renderSignals(signals = [], valuation) {
+  const lines = [];
+  lines.push('## Trade signals');
+  lines.push('');
+  if (valuation) {
+    lines.push(
+      `Portfolio $${valuation.total} (cash $${valuation.cash}) · realized P&L $${valuation.realized_pnl}. ` +
+        'Trigger levels are exact to $0.001 and 0.01%; order prices are rounded to a valid tick in the protective direction.',
+    );
+    lines.push('');
+  }
+  const act = signals.filter((s) => s.side === 'SELL' || s.side === 'BUY').sort((a, b) => SIDE_ORDER[a.side] - SIDE_ORDER[b.side] || a.priority - b.priority);
+  if (act.length) {
+    lines.push('| Signal | Asset | Qty | Price | Rule | Stop (order) | Target | Why |');
+    lines.push('|---|---|---:|---:|---|---|---:|---|');
+    for (const s of act) {
+      const stop = s.plan ? `${s.plan.stop} (${s.plan.stop_order})` : s.stop ? `${s.stop} (${s.stopOrder})` : '';
+      const target = s.plan?.target ?? s.target ?? '';
+      const label = s.side === 'BUY' ? `**${s.action.toUpperCase()}** ≤ ${s.plan.buy_limit}` : `**${s.action.replace('_', ' ').toUpperCase()}**`;
+      lines.push(`| ${label} | ${cell(s.symbol)} | ${s.quantity} | ${s.price} | ${s.rule} | ${stop} | ${target} | ${cell(s.reason)} |`);
+    }
+    lines.push('');
+  } else {
+    lines.push('No buy or sell rules triggered.');
+    lines.push('');
+  }
+  const holds = signals.filter((s) => s.side === 'HOLD');
+  if (holds.length) {
+    lines.push('| Holding | Avg cost | Price | P&L | Stop | To stop | Target | To target |');
+    lines.push('|---|---:|---:|---:|---:|---:|---:|---:|');
+    for (const s of holds) {
+      lines.push(`| ${cell(s.symbol)} | ${s.avgCost ?? ''} | ${s.price ?? 'n/a'} | ${s.pnlPct ?? ''} | ${s.stop ?? ''} | ${s.toStopPct ?? ''} | ${s.target ?? ''} | ${s.toTargetPct ?? ''} |`);
+    }
+    lines.push('');
+  }
+  const waits = signals.filter((s) => s.side === 'WAIT');
+  if (waits.length) {
+    lines.push('Waiting on entry conditions:');
+    lines.push('');
+    for (const s of waits) lines.push(`- **${s.symbol}** at ${s.price}: ${s.reason}`);
+    lines.push('');
+  }
+  return lines;
+}
+
 export function renderMarkdown(report) {
   const { advice, meta } = report;
   const lines = [];
@@ -44,6 +95,8 @@ export function renderMarkdown(report) {
   lines.push('');
   lines.push(`> ${DISCLAIMER}`);
   lines.push('');
+
+  if (report.signals) lines.push(...renderSignals(report.signals, report.portfolio));
 
   lines.push('## Market overview');
   lines.push('');

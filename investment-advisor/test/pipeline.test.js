@@ -4,6 +4,9 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { runPipeline, saveReport } from '../src/pipeline.js';
+import { loadRules } from '../src/rules.js';
+import { newPortfolio, applyTrade, loadPortfolio, savePortfolio } from '../src/portfolio.js';
+import { runCheck } from '../src/check.js';
 import { chartPayload, feedXml, jsonResponse } from './helpers.js';
 
 process.env.ADVISOR_QUIET = '1';
@@ -126,8 +129,11 @@ function fakeClient(calls) {
 }
 
 const emptyMemory = () => ({ version: 1, events: [], scorecard: { resolved: [] } });
+const rules = await loadRules();
 const run = (calls, overrides = {}) =>
   runPipeline({
+    rules,
+    portfolio: newPortfolio(10000),
     config,
     profile: { risk_tolerance: 'moderate', excluded_symbols: [] },
     fetchImpl: async (url) => fakeFetch(url),
@@ -188,8 +194,13 @@ test('runPipeline goes from feeds to a ranked, validated report', async () => {
   }
   assert.match(report.markdown, /not personalized financial/);
 
+  // With $10,000 cash and no positions, the rules size BUY signals for the picks.
+  assert.match(report.markdown, /## Trade signals/);
+  assert.ok(report.signals.some((s) => s.side === 'BUY'));
+  assert.equal(report.portfolio.cash, '10000.000');
+
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'advisor-'));
-  const files = await saveReport(report, dir);
+  const files = await saveReport(report, dir, { portfolioPath: path.join(dir, 'portfolio.json') });
   const saved = JSON.parse(await fs.readFile(path.join(dir, 'latest.json'), 'utf8'));
   assert.equal(saved.advice.recommendations.length, 3);
   assert.equal(saved.memory, undefined);
@@ -225,4 +236,55 @@ test('excluded symbols never reach the advisor', async () => {
   const advisePrompt = calls.find((c) => c.messages[0].content.startsWith('Today is')).messages[0].content;
   assert.ok(!advisePrompt.includes('"symbol": "NVDA"'));
   assert.deepEqual(report.advice.recommendations.map((r) => r.symbol).sort(), ['CL=F', 'ITA']);
+});
+
+test('held positions are priced, shown to the advisor, and run through the exit rules', async () => {
+  const calls = [];
+  // INTC is held; the news consensus on it is bearish, so the rules say sell.
+  let portfolio = applyTrade(newPortfolio(10000), { side: 'buy', symbol: 'INTC', quantity: 20, price: '30.000' });
+  const heldPrice = chartPayload('HELD', { dailyDrift: 0.003 }).chart.result[0].meta.regularMarketPrice;
+  portfolio = applyTrade(portfolio, { side: 'buy', symbol: 'HELD', quantity: 5, price: (heldPrice * 0.99).toFixed(3) });
+  const report = await run(calls, { portfolio });
+
+  const advisePrompt = calls.find((c) => c.messages[0].content.startsWith('Today is')).messages[0].content;
+  assert.match(advisePrompt, /"current_holdings"/);
+  assert.match(advisePrompt, /"symbol": "HELD"/);
+
+  const bySymbol = Object.fromEntries(report.signals.map((s) => [s.symbol, s]));
+  assert.equal(bySymbol.INTC.side, 'SELL');
+  assert.equal(bySymbol.INTC.rule, 'advisor-avoid');
+  assert.equal(bySymbol.HELD.side, 'HOLD'); // priced even though it is not a candidate
+  assert.ok(bySymbol.HELD.stop);
+  assert.ok(report.portfolio.positions.every((p) => p.price != null));
+});
+
+test('runCheck re-evaluates rules on fresh prices from the latest report without calling Claude', async () => {
+  const report = await run([]);
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'advisor-check-'));
+  const portfolioPath = path.join(dir, 'portfolio.json');
+  await saveReport(report, dir, { portfolioPath });
+
+  // Buy the first BUY signal and record it; the plan should come from the signal.
+  const buy = report.signals.find((s) => s.side === 'BUY');
+  const { planForNewBuy } = await import('../src/check.js');
+  const { plan } = await planForNewBuy({ symbol: buy.symbol, price: buy.plan.buy_limit, reportsDir: dir });
+  assert.equal(plan.stop, buy.plan.stop);
+  assert.equal(plan.entry, buy.plan.buy_limit);
+  const p = applyTrade(await loadPortfolio(portfolioPath), { side: 'buy', symbol: buy.symbol, quantity: buy.quantity, price: buy.plan.buy_limit, plan });
+  await savePortfolio(p, portfolioPath);
+
+  // Price drops to exactly the stop: the check says sell.
+  const stopPrice = Number(buy.plan.stop);
+  const fetchImpl = async (url) => {
+    const symbol = decodeURIComponent(url.split('/chart/')[1].split('?')[0]);
+    const body = chartPayload(symbol, { dailyDrift: 0.003 });
+    if (symbol === buy.symbol) body.chart.result[0].meta.regularMarketPrice = stopPrice;
+    return jsonResponse(body);
+  };
+  const out = await runCheck({ fetchImpl, portfolioPath, reportsDir: dir, rules });
+  const sig = out.signals.find((s) => s.symbol === buy.symbol && s.side !== 'BUY');
+  assert.equal(sig.rule, 'stop-loss');
+  assert.equal(sig.price, buy.plan.stop);
+  const saved = JSON.parse(await fs.readFile(path.join(dir, 'signals-latest.json'), 'utf8'));
+  assert.equal(saved.signals.length, out.signals.length);
 });

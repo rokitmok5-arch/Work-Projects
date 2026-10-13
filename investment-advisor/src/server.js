@@ -6,6 +6,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runPipeline, saveReport, loadProfile, REPORTS_DIR } from './pipeline.js';
 import { describeApiError } from './llm.js';
+import { runCheck, planForNewBuy } from './check.js';
+import { loadPortfolio, savePortfolio, applyTrade } from './portfolio.js';
 
 const app = express();
 app.use(cors());
@@ -69,6 +71,56 @@ app.get('/api/report/latest.md', async (req, res) => {
     res.status(404).json({ error: 'No report yet.' });
   }
 });
+
+// Positions and rule signals. Checks only fetch prices (no AI call), so they are cheap to run often.
+app.get('/api/portfolio', async (req, res) => {
+  const portfolio = await loadPortfolio();
+  if (!portfolio) return res.status(404).json({ error: 'No portfolio yet. Run `npm run portfolio -- init <cash>`.' });
+  let signals = null;
+  try {
+    signals = JSON.parse(await fs.readFile(path.join(REPORTS_DIR, 'signals-latest.json'), 'utf8'));
+  } catch {}
+  res.json({ portfolio, signals });
+});
+
+let checking = null;
+app.post('/api/check', async (req, res) => {
+  try {
+    checking ??= runCheck().finally(() => (checking = null));
+    res.json(await checking);
+  } catch (err) {
+    res.status(err.message.startsWith('No portfolio') ? 404 : 502).json({ error: err.message });
+  }
+});
+
+app.post('/api/trades', async (req, res) => {
+  const { side, symbol, quantity, price, fees, stop, target } = req.body ?? {};
+  if (!['buy', 'sell'].includes(side) || typeof symbol !== 'string' || !symbol || quantity == null || price == null) {
+    return res.status(400).json({ error: 'side ("buy"|"sell"), symbol, quantity and price are required.' });
+  }
+  try {
+    const portfolio = await loadPortfolio();
+    if (!portfolio) return res.status(404).json({ error: 'No portfolio yet.' });
+    const sym = symbol.toUpperCase();
+    const isNew = side === 'buy' && !portfolio.positions.some((p) => p.symbol === sym);
+    const { plan, assetClass } = isNew ? await planForNewBuy({ symbol: sym, price: String(price), stop, target }) : {};
+    const next = applyTrade(portfolio, { side, symbol: sym, quantity: String(quantity), price: String(price), fees: String(fees ?? 0), plan, assetClass });
+    await savePortfolio(next);
+    res.status(201).json({ portfolio: next });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Optional: re-check rules every N minutes against fresh prices (e.g. ADVISOR_CHECK_MINUTES=15).
+const checkMinutes = Number(process.env.ADVISOR_CHECK_MINUTES);
+if (checkMinutes > 0) {
+  setInterval(() => {
+    checking ??= runCheck()
+      .catch((err) => console.error('Rule check failed:', err.message))
+      .finally(() => (checking = null));
+  }, checkMinutes * 60 * 1000);
+}
 
 // Optional: refresh automatically every N hours (e.g. ADVISOR_REFRESH_HOURS=24).
 const refreshHours = Number(process.env.ADVISOR_REFRESH_HOURS);

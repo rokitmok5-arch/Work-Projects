@@ -181,7 +181,7 @@ export async function generateAdvice({ candidates, events = [], marketMap, score
     .sort((a, b) => a.rank - b.rank)
     .map((r, i) => {
       const c = known.get(r.symbol.toUpperCase());
-      return { ...r, symbol: c.symbol, rank: i + 1, sources: c.sources, evidence: c.evidence, market: c.market, events: c.events ?? [] };
+      return { ...r, symbol: c.symbol, rank: i + 1, sources: c.sources, evidence: c.evidence, market: c.market, events: c.events ?? [], independentReports: c.sourceCount };
     });
 
   if (recommendations.length < minPicks) {

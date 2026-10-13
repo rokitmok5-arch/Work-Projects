@@ -80,6 +80,26 @@ function ahead(list) {
     </tbody></table></div>`;
 }
 
+const SIDE_CLASS = { BUY: 'up', SELL: 'down', WAIT: 'warn', HOLD: 'muted' };
+function signalsPanel(data) {
+  if (!data) return '<h2>Positions & signals</h2><div class="panel muted">No portfolio yet. Run <code>npm run portfolio -- init &lt;cash&gt;</code> to start tracking positions.</div>';
+  const v = data.portfolio;
+  const sigs = (data.signals ?? []).slice().sort((a, b) => a.priority - b.priority);
+  const rows = sigs.map((s) => {
+    const stop = s.plan ? `${s.plan.stop} <span class="muted">(${s.plan.stop_order})</span>` : s.stop ? `${s.stop} <span class="muted">(${s.stopOrder})</span>` : '';
+    const label = s.side === 'BUY' ? `${s.action.toUpperCase()} ≤ ${s.plan.buy_limit}` : s.action.replace('_', ' ').toUpperCase();
+    return `<tr><td><strong class="${SIDE_CLASS[s.side]}">${esc(label)}</strong></td><td><strong>${esc(s.symbol)}</strong></td><td class="num">${esc(s.quantity ?? '')}</td>
+      <td class="num">${esc(s.price ?? 'n/a')}</td><td class="num">${stop}</td><td class="num">${esc(s.plan?.target ?? s.target ?? '')}</td>
+      <td>${esc(s.rule)}</td><td style="white-space:normal">${esc(s.reason)}</td></tr>`;
+  }).join('');
+  return `<h2>Positions & signals</h2>
+    <p class="muted">Portfolio $${esc(v.total)} · cash $${esc(v.cash)} · realized P&L $${esc(v.realized_pnl)} · checked ${esc(new Date(data.evaluatedAt).toLocaleString())}.
+      Levels are exact to $0.001; order prices (in parentheses) are rounded to a valid tick.
+      <button id="check" style="margin-left:8px;padding:4px 10px">Check prices now</button></p>
+    <div class="panel table-wrap"><table><thead><tr><th>Signal</th><th>Asset</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Stop (order)</th><th class="num">Target</th><th>Rule</th><th>Why</th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="8" class="muted">No signals.</td></tr>'}</tbody></table></div>`;
+}
+
 function trackRecord(sc) {
   if (!sc) return '';
   const body = sc.graded === 0
@@ -108,7 +128,11 @@ function events(list) {
     </tbody></table></div><p><em>Outlook:</em> ${esc(e.outlook)}</p></details>`).join('')}</div>`;
 }
 
+let lastReport = null;
+let lastSignals = null;
+
 function render(r) {
+  lastReport = r;
   const a = r.advice;
   $('#meta').textContent = `Generated ${new Date(r.meta.generatedAt).toLocaleString()} · ${r.meta.articleCount} articles from ${r.meta.sourcesWithArticles} outlets · ${r.meta.eventCount ?? 0} global events · ${r.meta.pricedCount} assets priced`;
   const rows = a.recommendations.map((x) => `<tr>
@@ -129,8 +153,10 @@ function render(r) {
       <li><strong>Entry:</strong> ${esc(x.entry_note)}</li>
       ${x.evidence.filter((e) => e.link).slice(0, 4).map((e) => `<li><a href="${esc(e.link)}" target="_blank" rel="noopener">${esc(e.source)}: ${esc(e.title)}</a></li>`).join('')}
       </ul></details>`).join('');
+  const signalData = lastSignals ?? (r.signals ? { signals: r.signals, portfolio: r.portfolio, evaluatedAt: r.meta.generatedAt } : null);
   $('#content').innerHTML = `
-    <section class="panel"><h2 style="margin-top:0">Market overview</h2><p>${esc(a.market_overview)}</p>
+    ${signalsPanel(signalData)}
+    <section class="panel" style="margin-top:16px"><h2 style="margin-top:0">Market overview</h2><p>${esc(a.market_overview)}</p>
       <ul>${a.event_analysis.map((t) => `<li><strong>${esc(t.event)}</strong> — ${esc(t.implication)}<br><span class="muted">Market read: ${esc(t.market_read)}</span>${t.timeline ? `<br><span class="muted">Timeline: ${esc(t.timeline)}</span>` : ''}</li>`).join('')}</ul></section>
     ${ahead(r.events ?? [])}
     ${flux(r.marketMap)}
@@ -145,6 +171,24 @@ function render(r) {
     ${trackRecord(r.scorecard)}
     ${a.warnings.length ? `<h2>Pipeline warnings</h2><div class="panel"><ul>${a.warnings.map((w) => `<li>${esc(w)}</li>`).join('')}</ul></div>` : ''}`;
 }
+
+async function loadSignals() {
+  const res = await fetch('/api/portfolio');
+  if (res.ok) {
+    const { signals } = await res.json();
+    if (signals) lastSignals = signals;
+  }
+}
+
+document.addEventListener('click', async (e) => {
+  if (e.target.id !== 'check') return;
+  e.target.disabled = true;
+  e.target.textContent = 'Checking…';
+  const res = await fetch('/api/check', { method: 'POST' });
+  if (res.ok) lastSignals = await res.json();
+  else alert((await res.json()).error);
+  if (lastReport) render(lastReport);
+});
 
 async function loadLatest() {
   const res = await fetch('/api/report/latest');
@@ -164,7 +208,7 @@ $('#run').addEventListener('click', async () => {
   poll();
 });
 
-loadLatest();
+loadSignals().then(loadLatest);
 poll();
 </script>
 </body>

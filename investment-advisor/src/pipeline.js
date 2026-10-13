@@ -9,6 +9,9 @@ import { fetchQuotes, buildMarketMap } from './market.js';
 import { generateAdvice } from './advise.js';
 import { renderMarkdown } from './report.js';
 import { log } from './util.js';
+import { loadRules, evaluateRules } from './rules.js';
+import { loadPortfolio, newPortfolio, savePlans, valuePortfolio, PORTFOLIO_PATH } from './portfolio.js';
+import { toMils, milsToString, fmtPct } from './money.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const REPORTS_DIR = process.env.ADVISOR_REPORTS_DIR || path.join(ROOT, 'reports');
@@ -69,12 +72,16 @@ export async function runPipeline({
   fetchImpl = fetch,
   client,
   memory,
+  portfolio,
+  rules,
   now = Date.now(),
   onStage = () => {},
 } = {}) {
   config ??= await loadConfig();
   profile ??= await loadProfile();
   memory ??= await loadMemory();
+  rules ??= await loadRules();
+  portfolio ??= (await loadPortfolio()) ?? newPortfolio(profile.investable_amount_usd ?? 0);
   const warnings = [];
 
   onStage('news');
@@ -107,8 +114,9 @@ export async function runPipeline({
   onStage('market');
   const mapSymbols = Object.values(config.marketMap ?? {}).flatMap((group) => Object.keys(group));
   const channelSymbols = events.flatMap((e) => e.channels.map((c) => c.symbol));
+  const heldSymbols = portfolio.positions.map((p) => p.symbol);
   const { quotes, series, failed } = await fetchQuotes(
-    [...candidates.map((c) => c.symbol), ...channelSymbols, ...mapSymbols],
+    [...candidates.map((c) => c.symbol), ...channelSymbols, ...mapSymbols, ...heldSymbols],
     { fetchImpl },
   );
   const marketMap = buildMarketMap(config.marketMap, quotes);
@@ -121,6 +129,20 @@ export async function runPipeline({
   const scored = scoreCandidates(linkEvents(priced.length >= minPicks ? priced : candidates, measuredEvents), quotes);
   const themeSummary = topThemes(themes);
 
+  // The advisor sees what is actually held, at current prices, so it does not pile into existing positions.
+  const holdings = valuePortfolio(
+    portfolio,
+    Object.fromEntries(heldSymbols.filter((sym) => quotes[sym]).map((sym) => [sym, toMils(quotes[sym].price)])),
+  );
+  const advisorProfile = portfolio.positions.length
+    ? {
+        ...profile,
+        portfolio_value_usd: milsToString(holdings.total),
+        cash_usd: milsToString(holdings.cash),
+        current_holdings: holdings.rows.map((r) => ({ symbol: r.symbol, allocation_pct: r.weightBps / 100, unrealized_pnl: fmtPct(r.pnlBps) })),
+      }
+    : profile;
+
   onStage('advise');
   const advice = await generateAdvice({
     candidates: scored,
@@ -128,7 +150,7 @@ export async function runPipeline({
     marketMap,
     scorecard,
     themes: themeSummary,
-    profile,
+    profile: advisorProfile,
     minPicks,
     maxPicks,
     client,
@@ -136,6 +158,9 @@ export async function runPipeline({
   advice.warnings.push(...warnings);
   const unpriced = failed.filter((s) => !mapSymbols.includes(s));
   if (unpriced.length) advice.warnings.push(`No market data for: ${unpriced.join(', ')}`);
+
+  onStage('rules');
+  const trading = evaluateRules({ portfolio, advice, candidates: scored, events: measuredEvents, quotes, rules, now });
 
   const report = {
     meta: {
@@ -157,19 +182,24 @@ export async function runPipeline({
     themes: themeSummary,
     candidates: scored,
     advice,
+    signals: trading.signals,
+    portfolio: trading.valuation,
     memory: nextMemory,
+    portfolioState: trading.portfolio,
   };
   report.markdown = renderMarkdown(report);
   onStage('done');
   return report;
 }
 
-export async function saveReport(report, dir = REPORTS_DIR) {
+export async function saveReport(report, dir = REPORTS_DIR, { portfolioPath = PORTFOLIO_PATH } = {}) {
   await fs.mkdir(dir, { recursive: true });
   const stamp = report.meta.generatedAt.replace(/[:.]/g, '-');
   const base = path.join(dir, `advice-${stamp}`);
-  const { markdown, memory, ...json } = report;
+  const { markdown, memory, portfolioState, ...json } = report;
   if (memory) await fs.writeFile(path.join(dir, MEMORY_FILE), JSON.stringify(memory, null, 2));
+  // Rules update position plans (high-water marks, trailing stops); quantities only change via recorded trades.
+  if (portfolioState) await savePlans(portfolioState, portfolioPath);
   await fs.writeFile(`${base}.json`, JSON.stringify(json, null, 2));
   await fs.writeFile(`${base}.md`, markdown);
   await fs.writeFile(path.join(dir, 'latest.json'), JSON.stringify(json, null, 2));
