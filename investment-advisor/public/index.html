@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Investment Advisor</title>
+  <style>
+    :root {
+      --bg: #f7f7f5; --panel: #ffffff; --text: #1d1d1f; --muted: #6b6b70; --line: #e4e4e0;
+      --accent: #1f6feb; --up: #1a7f37; --down: #cf222e; --warn: #9a6700;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #111214; --panel: #1a1b1e; --text: #ececec; --muted: #9a9aa0; --line: #2c2d31;
+              --accent: #4c8dff; --up: #3fb950; --down: #f85149; --warn: #d29922; }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, -apple-system, sans-serif; }
+    main { max-width: 1100px; margin: 0 auto; padding: 24px 16px 64px; }
+    header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; }
+    h1 { font-size: 22px; margin: 0; }
+    h2 { font-size: 17px; margin: 28px 0 10px; }
+    .muted { color: var(--muted); }
+    button { background: var(--accent); color: #fff; border: 0; border-radius: 8px; padding: 9px 16px; font: inherit; cursor: pointer; }
+    button:disabled { opacity: .55; cursor: default; }
+    .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+    .disclaimer { font-size: 13px; color: var(--muted); border-left: 3px solid var(--warn); padding-left: 10px; margin: 16px 0; }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+    th { color: var(--muted); font-weight: 500; }
+    td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .up { color: var(--up); } .down { color: var(--down); } .warn { color: var(--warn); }
+    .pill { display: inline-block; padding: 1px 8px; border-radius: 99px; font-size: 12px; border: 1px solid var(--line); }
+    details { border-bottom: 1px solid var(--line); padding: 10px 0; }
+    summary { cursor: pointer; font-weight: 600; }
+    details ul { margin: 8px 0 0; padding-left: 20px; }
+    a { color: var(--accent); }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>Investment Advisor</h1>
+      <div id="meta" class="muted">No report loaded.</div>
+    </div>
+    <div>
+      <span id="status" class="muted"></span>
+      <button id="run">Run new analysis</button>
+    </div>
+  </header>
+  <p class="disclaimer">AI-generated research from news headlines and public market data. Not personalized financial advice. Verify independently and consult a licensed advisor before investing.</p>
+  <div id="content"></div>
+</main>
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const pct = (v) => v == null ? 'n/a' : `<span class="${v > 0 ? 'up' : v < 0 ? 'down' : 'muted'}">${v > 0 ? '+' : ''}${v.toFixed(1)}%</span>`;
+const ACTION = { strong_buy: 'Strong buy', buy: 'Buy', accumulate: 'Accumulate', watch: 'Watch' };
+
+const STATUS = {
+  'ahead of the move': ['ahead of the move', 'warn'], underway: ['underway', 'up'], 'priced in': ['priced in', 'muted'],
+  diverging: ['moving the other way', 'down'], 'not reacting': ['not reacting', 'down'], resolved: ['event resolved', 'muted'],
+};
+const status = (v) => { const [label, cls] = STATUS[v] ?? [v, 'muted']; return `<span class="${cls}">${esc(label)}</span>`; };
+const LAG = { immediate: 'days', weeks: 'weeks', months: 'months', long_term: '6+ months' };
+const CONF = { high: 3, medium: 2, low: 1 };
+
+function ahead(list) {
+  const rows = list
+    .flatMap((e) => e.channels.map((c) => ({ ...c, event: e.name })))
+    .filter((c) => c.status === 'ahead of the move' || c.status === 'underway')
+    .sort((a, b) => CONF[b.confidence] - CONF[a.confidence] || (b.remainingPct ?? 0) - (a.remainingPct ?? 0))
+    .slice(0, 20);
+  if (!rows.length) return '';
+  return `<h2>Forecast: moves still ahead</h2><p class="muted">Effects of reported events that have not fully reached prices yet. Estimates, not certainties.</p>
+    <div class="panel table-wrap"><table><thead><tr><th>Asset</th><th>Dir.</th><th>Driven by</th><th>Lands in</th><th class="num">Expected</th><th class="num">So far</th><th>Window closes</th><th>Confidence</th></tr></thead><tbody>
+    ${rows.map((c) => `<tr><td><strong>${esc(c.symbol)}</strong> <span class="muted">${esc(c.name)}</span></td><td>${c.direction === 'up' ? '▲' : '▼'}</td><td>${esc(c.event)}</td><td>${LAG[c.lag]}</td>
+      <td class="num">${c.expectedMovePct.toFixed(1)}%</td><td class="num">${pct(c.movedPct)}</td><td>${esc(c.windowEnds?.slice(0, 10))}</td><td>${esc(c.confidence)}</td></tr>`).join('')}
+    </tbody></table></div>`;
+}
+
+const SIDE_CLASS = { BUY: 'up', SELL: 'down', WAIT: 'warn', HOLD: 'muted' };
+function signalsPanel(data) {
+  if (!data) return '<h2>Positions & signals</h2><div class="panel muted">No portfolio yet. Run <code>npm run portfolio -- init &lt;cash&gt;</code> to start tracking positions.</div>';
+  const v = data.portfolio;
+  const sigs = (data.signals ?? []).slice().sort((a, b) => a.priority - b.priority);
+  const rows = sigs.map((s) => {
+    const stop = s.plan ? `${s.plan.stop} <span class="muted">(${s.plan.stop_order})</span>` : s.stop ? `${s.stop} <span class="muted">(${s.stopOrder})</span>` : '';
+    const label = s.side === 'BUY' ? `${s.action.toUpperCase()} ≤ ${s.plan.buy_limit}` : s.action.replace('_', ' ').toUpperCase();
+    return `<tr><td><strong class="${SIDE_CLASS[s.side]}">${esc(label)}</strong></td><td><strong>${esc(s.symbol)}</strong></td><td class="num">${esc(s.quantity ?? '')}</td>
+      <td class="num">${esc(s.price ?? 'n/a')}</td><td class="num">${stop}</td><td class="num">${esc(s.plan?.target ?? s.target ?? '')}</td>
+      <td>${esc(s.rule)}</td><td style="white-space:normal">${esc(s.reason)}</td></tr>`;
+  }).join('');
+  return `<h2>Positions & signals</h2>
+    <p class="muted">Portfolio $${esc(v.total)} · cash $${esc(v.cash)} · realized P&L $${esc(v.realized_pnl)} · checked ${esc(new Date(data.evaluatedAt).toLocaleString())}.
+      Levels are exact to $0.001; order prices (in parentheses) are rounded to a valid tick.
+      <button id="check" style="margin-left:8px;padding:4px 10px">Check prices now</button></p>
+    <div class="panel table-wrap"><table><thead><tr><th>Signal</th><th>Asset</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Stop (order)</th><th class="num">Target</th><th>Rule</th><th>Why</th></tr></thead>
+    <tbody>${rows || '<tr><td colspan="8" class="muted">No signals.</td></tr>'}</tbody></table></div>`;
+}
+
+function trackRecord(sc) {
+  if (!sc) return '';
+  const body = sc.graded === 0
+    ? '<p class="muted">No forecasts have reached the end of their window yet. They are graded automatically as windows close.</p>'
+    : `<p>${sc.graded} forecasts graded: <strong>${sc.hits} hits</strong>, ${sc.partial} partial, ${sc.misses} misses (hit rate ${Math.round(sc.hitRate * 100)}%).</p>
+       <ul>${sc.recent.map((r) => `<li>${esc(r.outcome.toUpperCase())}: ${esc(r.symbol)} ${esc(r.direction)} on “${esc(r.event)}”, forecast ${r.expectedMovePct.toFixed(1)}%, moved ${pct(r.movedPct)}</li>`).join('')}</ul>`;
+  return `<h2>Forecast track record</h2><div class="panel">${body}</div>`;
+}
+
+function flux(map) {
+  if (!map?.anomalies?.length) return '';
+  const rows = map.anomalies.map((r) => {
+    const z = Math.abs(r.move1dZ ?? 0) >= Math.abs(r.move5dZ ?? 0) ? `${r.move1dZ}σ 1d` : `${r.move5dZ}σ 5d`;
+    return `<tr><td>${esc(r.label)} <span class="muted">${esc(r.symbol)}</span></td><td>${esc(r.group)}</td><td class="num">${pct(r.change1dPct)}</td><td class="num">${pct(r.change5dPct)}</td><td class="num">${esc(z)}</td></tr>`;
+  }).join('');
+  return `<h2>Market flux: unusual moves</h2><div class="panel table-wrap"><table>
+    <thead><tr><th>Instrument</th><th>Group</th><th class="num">1d</th><th class="num">5d</th><th class="num">Size</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
+function events(list) {
+  if (!list.length) return '';
+  return `<h2>Global events → market transmission</h2><div class="panel">${list.map((e) => `<details><summary>${esc(e.name)} <span class="pill">severity ${e.severity}/5</span> <span class="pill">${esc(e.status.replace(/_/g, ' '))}</span> <span class="muted">${e.independentReports} independent reports${e.ongoing ? ' · ongoing' : ''}</span></summary>
+    <p>${esc(e.summary)}</p><p class="muted">${esc(e.outlets.join(', '))} · ${esc(e.regions.join(', ') || 'global')} · first reported ${esc(e.firstReported?.slice(0, 10))}${e.effectiveDate ? ` · effective ${esc(e.effectiveDate)}` : ''}</p>
+    <div class="table-wrap"><table><thead><tr><th>Asset</th><th>Dir.</th><th>Order</th><th>Mechanism</th><th>Lands in</th><th class="num">Expected</th><th class="num">So far</th><th>Status</th></tr></thead><tbody>
+    ${e.channels.map((c) => `<tr><td><strong>${esc(c.symbol)}</strong></td><td>${c.direction === 'up' ? '▲' : '▼'}</td><td>${esc(c.order)}</td><td style="white-space:normal">${esc(c.mechanism)}</td><td>${LAG[c.lag]}</td><td class="num">${c.expectedMovePct.toFixed(1)}%</td><td class="num">${pct(c.movedPct)}</td><td>${status(c.status)}</td></tr>`).join('')}
+    </tbody></table></div><p><em>Outlook:</em> ${esc(e.outlook)}</p></details>`).join('')}</div>`;
+}
+
+let lastReport = null;
+let lastSignals = null;
+
+function render(r) {
+  lastReport = r;
+  const a = r.advice;
+  $('#meta').textContent = `Generated ${new Date(r.meta.generatedAt).toLocaleString()} · ${r.meta.articleCount} articles from ${r.meta.sourcesWithArticles} outlets · ${r.meta.eventCount ?? 0} global events · ${r.meta.pricedCount} assets priced`;
+  const rows = a.recommendations.map((x) => `<tr>
+      <td class="num">${x.rank}</td><td><strong>${esc(x.symbol)}</strong> <span class="muted">${esc(x.name)}</span></td>
+      <td>${esc(x.asset_class)}</td><td><span class="pill">${ACTION[x.action]}</span></td><td>${esc(x.conviction)}</td>
+      <td class="num">${x.suggested_allocation_pct}%</td><td class="num">${x.market?.price ?? 'n/a'}</td>
+      <td class="num">${pct(x.market?.change1moPct)}</td><td class="num">${x.sources.length}</td><td>${esc(x.market?.trend ?? 'n/a')}</td></tr>`).join('');
+  const details = a.recommendations.map((x) => `<details><summary>${x.rank}. ${esc(x.symbol)} — ${esc(x.name)}</summary>
+      <p>${esc(x.thesis)}</p><ul>
+      ${x.causal_chain && x.causal_chain !== 'company-specific' ? `<li><strong>Causal chain:</strong> ${esc(x.causal_chain)}</li>` : ''}
+      ${x.expected_timing ? `<li><strong>Timing:</strong> ${esc(x.expected_timing)}${x.expected_move_pct ? ` · expected move ${pct(x.expected_move_pct)}` : ''}</li>` : ''}
+      ${(x.events ?? []).map((e) => `<li><strong>Event:</strong> ${esc(e.event)}${e.ongoing ? ' (ongoing)' : ''} — ${esc(e.direction)} over ${LAG[e.lag]}, ${status(e.status)}${e.movedPct != null ? ` (${pct(e.movedPct)} of a forecast ${e.expectedMovePct.toFixed(1)}%)` : ''}</li>`).join('')}
+      ${x.watch_signals?.length ? `<li><strong>Watch:</strong> ${esc(x.watch_signals.join('; '))}</li>` : ''}
+      <li><strong>News consensus:</strong> ${esc(x.news_consensus)}</li>
+      <li><strong>Market:</strong> ${esc(x.market_confirmation)}</li>
+      <li><strong>Catalysts:</strong> ${esc(x.catalysts.join('; '))}</li>
+      <li><strong>Risks:</strong> ${esc(x.key_risks.join('; '))}</li>
+      <li><strong>Entry:</strong> ${esc(x.entry_note)}</li>
+      ${x.evidence.filter((e) => e.link).slice(0, 4).map((e) => `<li><a href="${esc(e.link)}" target="_blank" rel="noopener">${esc(e.source)}: ${esc(e.title)}</a></li>`).join('')}
+      </ul></details>`).join('');
+  const signalData = lastSignals ?? (r.signals ? { signals: r.signals, portfolio: r.portfolio, evaluatedAt: r.meta.generatedAt } : null);
+  $('#content').innerHTML = `
+    ${signalsPanel(signalData)}
+    <section class="panel" style="margin-top:16px"><h2 style="margin-top:0">Market overview</h2><p>${esc(a.market_overview)}</p>
+      <ul>${a.event_analysis.map((t) => `<li><strong>${esc(t.event)}</strong> — ${esc(t.implication)}<br><span class="muted">Market read: ${esc(t.market_read)}</span>${t.timeline ? `<br><span class="muted">Timeline: ${esc(t.timeline)}</span>` : ''}</li>`).join('')}</ul></section>
+    ${ahead(r.events ?? [])}
+    ${flux(r.marketMap)}
+    <h2>Top ${a.recommendations.length} picks</h2>
+    <div class="panel table-wrap"><table>
+      <thead><tr><th class="num">#</th><th>Asset</th><th>Class</th><th>Action</th><th>Conviction</th><th class="num">Alloc.</th><th class="num">Price</th><th class="num">1mo</th><th class="num">Outlets</th><th>Trend</th></tr></thead>
+      <tbody>${rows}<tr><td></td><td>Cash</td><td></td><td></td><td></td><td class="num">${a.cash_allocation_pct}%</td><td colspan="4"></td></tr></tbody></table></div>
+    <h2>Details</h2><div class="panel">${details}</div>
+    ${a.avoid.length ? `<h2>Avoid / reduce</h2><div class="panel"><ul>${a.avoid.map((x) => `<li><strong>${esc(x.symbol)}</strong> ${esc(x.name)} — ${esc(x.reason)}</li>`).join('')}</ul></div>` : ''}
+    <h2>Portfolio notes</h2><div class="panel"><p>${esc(a.portfolio_notes)}</p></div>
+    ${events(r.events ?? [])}
+    ${trackRecord(r.scorecard)}
+    ${a.warnings.length ? `<h2>Pipeline warnings</h2><div class="panel"><ul>${a.warnings.map((w) => `<li>${esc(w)}</li>`).join('')}</ul></div>` : ''}`;
+}
+
+async function loadSignals() {
+  const res = await fetch('/api/portfolio');
+  if (res.ok) {
+    const { signals } = await res.json();
+    if (signals) lastSignals = signals;
+  }
+}
+
+document.addEventListener('click', async (e) => {
+  if (e.target.id !== 'check') return;
+  e.target.disabled = true;
+  e.target.textContent = 'Checking…';
+  const res = await fetch('/api/check', { method: 'POST' });
+  if (res.ok) lastSignals = await res.json();
+  else alert((await res.json()).error);
+  if (lastReport) render(lastReport);
+});
+
+async function loadLatest() {
+  const res = await fetch('/api/report/latest');
+  if (res.ok) render(await res.json());
+}
+
+async function poll() {
+  const { job } = await (await fetch('/api/status')).json();
+  $('#run').disabled = job.running;
+  $('#status').textContent = job.running ? `Running: ${job.stage}…` : job.error ? `Last run failed: ${job.error}` : '';
+  if (job.running) setTimeout(poll, 3000);
+  else if (job.finishedAt && !job.error) loadLatest();
+}
+
+$('#run').addEventListener('click', async () => {
+  await fetch('/api/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+  poll();
+});
+
+loadSignals().then(loadLatest);
+poll();
+</script>
+</body>
+</html>

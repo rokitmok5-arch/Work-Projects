@@ -1,0 +1,29 @@
+{
+  "_comment": "Deterministic buy/sell rules. Percentages are in percent and are applied at 0.01% precision; prices at $0.001. Every rule is evaluated in exact integer arithmetic (src/money.js).",
+  "entry": {
+    "actions": ["strong_buy", "buy", "accumulate"],
+    "minIndependentReports": 2,
+    "maxRsi": 70,
+    "maxExtensionAboveSma20Pct": 8,
+    "accumulateFraction": 0.5,
+    "allowContradictedIfForecastAhead": true
+  },
+  "risk": {
+    "riskPerTradePct": 1,
+    "maxPositionPct": 15,
+    "stopSigma": 2,
+    "stopHorizonDays": 10,
+    "minStopPct": 3,
+    "maxStopPct": 25,
+    "rewardToRisk": 2,
+    "fractionalShares": false
+  },
+  "exit": {
+    "takeProfitFraction": 0.5,
+    "trailActivationR": 1,
+    "reduceOnDivergingFraction": 0.5,
+    "pricedInRsi": 75,
+    "timeStopMinR": 0.5,
+    "minIndependentReportsForFlip": 2
+  }
+}

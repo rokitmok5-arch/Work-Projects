@@ -1,0 +1,14 @@
+{
+  "risk_tolerance": "moderate",
+  "time_horizon": "3-5 years",
+  "investable_amount_usd": 10000,
+  "goals": "Long-term growth with some exposure to themes driven by global events",
+  "preferred_asset_classes": ["stock", "etf", "crypto", "commodity"],
+  "max_crypto_allocation_pct": 10,
+  "excluded_symbols": [],
+  "excluded_sectors": [],
+  "current_holdings": [
+    { "symbol": "VTI", "allocation_pct": 40 }
+  ],
+  "notes": "US-based investor using a standard brokerage account."
+}
