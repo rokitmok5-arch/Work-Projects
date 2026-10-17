@@ -1,0 +1,24 @@
+{
+  "name": "greentree-marketing-agent",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AI content agent with one-tap approval for real estate sales agents (GreenTree first).",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "generate": "node scripts/generate.js",
+    "test": "node --test test/*.test.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.135.0",
+    "dotenv": "^18.0.8",
+    "express": "^5.3.0",
+    "node-cron": "^4.6.0",
+    "nodemailer": "^10.1.2",
+    "zod": "^4.6.7"
+  }
+}
